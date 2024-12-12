@@ -1,5 +1,10 @@
 __pycache__
 *.csv
 *.pkl
+*.txt
+*.mtx
+*.tsv
 *.ipynb
 *.idea
+python_archive/
+.Rproj.user
