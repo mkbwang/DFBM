@@ -4,7 +4,9 @@ __pycache__
 *.txt
 *.mtx
 *.tsv
+*.rds
 *.ipynb
 *.idea
+*.Rhistory
 python_archive/
 .Rproj.user
