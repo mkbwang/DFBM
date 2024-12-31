@@ -10,4 +10,10 @@ Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
 Imports:
-    Matrix
+  Matrix,
+  Rcpp (>= 1.0.5),
+  RcppArmadillo (>= 0.10.1.2.0),
+  pROC
+LinkingTo:
+  Rcpp,
+  RcppArmadillo

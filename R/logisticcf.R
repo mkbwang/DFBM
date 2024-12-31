@@ -1,6 +1,46 @@
 
 
-cf <- function(S, Z, K, lambda, max_iter=1000, tol=1e-4, cap=10, init_A=NULL, init_B=NULL){
+#' Train_LCF
+#' @description
+#' training logistic collaborative filtering and test it on a validation set
+#'
+#' @useDynLib NDBEC, .registration=TRUE
+#' @importFrom pROC auc
+#' @importFrom Rcpp sourceCpp
+#' @import RcppArmadillo
+#' @param train_mask a binary matrix indicating the training set
+#' @param validation_mask a binary matrix indicating the validation set
+#' @param observation a matrix of observed values, 0 or 1
+#' @param K dimension of latent space
+#' @param lambda regularization parameter
+#' @param max_iter maximum number of iterations for collaborative filtering
+#' @param tol tolerance for collaborative filtering, change of logit loss between iterations
+#' @param cap limit the maximum of the absolute value of estimated logit link
+#' @returns logistic collaborative filtering results and performance on validation set
+#' @export
+train_lcf <- function(train_mask, validation_mask, observation,
+                      K,  lambda, max_iter=1000, tol=1e-5, cap=10){
+
+  fitted_result <- logisticcf(observation, train_mask, K, lambda, max_iter, tol, cap)
+  A_mat <- fitted_result$A
+  B_mat <- fitted_result$B
+  pi_mat <- fitted_result$pi
+  loss_trace <- fitted_result$loss_trace
+  validation_indices <- which(validation_mask > 0, arr.ind=T)
+  pi_validation <- pi_mat[validation_indices]
+  truth_validation <- observation[validation_indices]
+
+  auc <- pROC::auc(truth_validation, pi_validation)
+  llk_validation <- mean(truth_validation*log(pi_validation)+
+                                    (1-truth_validation)*log(1-pi_validation))
+
+  return(list(A=A_mat, B=B_mat, pi=pi_mat, loss_trace=loss_trace,
+              auc_validation=auc, llk_validation=llk_validation))
+
+}
+
+
+cfR <- function(S, Z, K, lambda, max_iter=1000, tol=1e-4, cap=10, init_A=NULL, init_B=NULL){
 
   # S: user-item matrix
   # K: number of latent factors
@@ -74,7 +114,7 @@ cf <- function(S, Z, K, lambda, max_iter=1000, tol=1e-4, cap=10, init_A=NULL, in
   return(list(A=A, B=B, S_lowrank=S_lowrank, n_iter = iter, mse_trace=mse_trace))
 }
 
-logisticcf <- function(X, Z, K, lambda, max_iter=1000, tol=1e-5, cap=10){
+logisticcfR <- function(X, Z, K, lambda, max_iter=1000, tol=1e-5, cap=10){
   # X: user-item matrix
   # K: number of latent factors
   # lambda: regularization parameter
@@ -89,7 +129,7 @@ logisticcf <- function(X, Z, K, lambda, max_iter=1000, tol=1e-5, cap=10){
   n_obs <- sum(Z)
   W <- 2*X - 1
 
-  init_values <- cf(S=4*W, Z=Z, K=K, lambda=lambda, max_iter=max_iter, tol=tol, cap=cap)
+  init_values <- cfR(S=4*W, Z=Z, K=K, lambda=lambda, max_iter=max_iter, tol=tol, cap=cap)
   A <- init_values$A
   B <- init_values$B
   S <- init_values$S_lowrank
@@ -99,7 +139,7 @@ logisticcf <- function(X, Z, K, lambda, max_iter=1000, tol=1e-5, cap=10){
   iter <- 0
   while(iter < max_iter){
     S_star <- S + 4*W/(1+exp(W*S))
-    new_values <- cf(S=S_star, Z=Z, K=K, lambda=lambda, max_iter=max_iter, tol=tol, cap=cap,
+    new_values <- cfR(S=S_star, Z=Z, K=K, lambda=lambda, max_iter=max_iter, tol=tol, cap=cap,
                      init_A=A, init_B=B)
     A <- new_values$A
     B <- new_values$B
