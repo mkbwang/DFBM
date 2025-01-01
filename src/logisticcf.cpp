@@ -14,7 +14,7 @@ double mse_loss(const arma::mat &estim, const arma::mat &target, const arma::uma
 }
 
 
-struct cfoutput cf(const arma::mat &S, const arma::umat &Z, arma::mat &init_A, arma::mat &init_B,
+struct cfoutput cf(const arma::mat &S, const arma::umat &Z, const arma::mat &init_A, const arma::mat &init_B,
         unsigned K, double lambda, unsigned max_iter, double tol, int cap){
 
   bool express = all(vectorise(Z) == 1); // if no missing entries, we have a faster implementation
@@ -33,40 +33,35 @@ struct cfoutput cf(const arma::mat &S, const arma::umat &Z, arma::mat &init_A, a
   arma::mat S_lowrank = A.t() * B;
   double loss = mse_loss(S_lowrank, S, Z);
   vec loss_trace = zeros<vec>(max_iter);
-  arma::mat new_A, new_B;
   while (iter < max_iter){
     if (express){ // all entries are observed
-      new_A = solve(B * B.t() + lambda * eye(K, K), B * S.t(),
+      A = solve(B * B.t() + lambda * eye(K, K), B * S.t(),
                     solve_opts::likely_sympd);
-      new_B = solve(new_A * new_A.t() + lambda * eye(K, K), new_A * S,
+      B = solve(A * A.t() + lambda * eye(K, K), A * S,
                     solve_opts::likely_sympd);
     } else {
-      new_A = ALS_update(S, Z, A, B, K, lambda, true);
-      new_B = ALS_update(S, Z, new_A, B, K, lambda, false);
+      A = ALS_updateA(S, Z, A, B, K, lambda);
+      B = ALS_updateB(S, Z, A, B, K, lambda);
       // for (unsigned i = 0; i < N; i++) { // update A
-      //   uvec subrow = {i};
       //   uvec subcol = find(Z.row(i) == 1);
       //   arma::mat B_filter = B.cols(subcol);
       //   vec S_selected = vectorise(S.row(i));
       //   vec S_filter = S_selected.elem(subcol);
-      //   new_A.col(i) = solve(B_filter * B_filter.t() + lambda * eye(K, K),
+      //   A.col(i) = solve(B_filter * B_filter.t() + lambda * eye(K, K),
       //             B_filter * S_filter,
       //             solve_opts::likely_sympd);
       // }
       // for (unsigned j = 0; j < P; j++) { // update B
       //   uvec subrow = find(Z.col(j) == 1);
-      //   uvec subcol = {j};
-      //   arma::mat A_filter = new_A.cols(subrow);
+      //   arma::mat A_filter = A.cols(subrow);
       //   vec S_selected = vectorise(S.col(j));
       //   vec S_filter = S_selected.elem(subrow);
-      //   new_B.col(j) = solve(A_filter * A_filter.t() + lambda * eye(K, K),
+      //   B.col(j) = solve(A_filter * A_filter.t() + lambda * eye(K, K),
       //             A_filter * S_filter,
       //             solve_opts::likely_sympd);
       // }
     }
-    arma::mat new_S_lowrank = new_A.t() * new_B;
-    A = new_A;
-    B = new_B;
+    arma::mat new_S_lowrank = A.t() * B;
     double new_loss = mse_loss(new_S_lowrank, S, Z);
     loss_trace(iter) = new_loss;
     iter++;
