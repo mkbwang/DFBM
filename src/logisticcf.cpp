@@ -36,32 +36,33 @@ struct cfoutput cf(const arma::mat &S, const arma::umat &Z, arma::mat &init_A, a
   arma::mat new_A, new_B;
   while (iter < max_iter){
     if (express){ // all entries are observed
-      new_A = solve(B * B.t() + lambda * eye(K, K), B * S.t());
+      new_A = solve(B * B.t() + lambda * eye(K, K), B * S.t(),
+                    solve_opts::likely_sympd);
       new_B = solve(new_A * new_A.t() + lambda * eye(K, K), new_A * S,
                     solve_opts::likely_sympd);
     } else {
-      new_A = A;
-      new_B = B;
-      for (unsigned i = 0; i < N; i++) { // update A
-        uvec subrow = {i};
-        uvec subcol = find(Z.row(i) == 1);
-        arma::mat B_filter = B.cols(subcol);
-        vec S_selected = vectorise(S.row(i));
-        vec S_filter = S_selected.elem(subcol);
-        new_A.col(i) = solve(B_filter * B_filter.t() + lambda * eye(K, K),
-                  B_filter * S_filter,
-                  solve_opts::likely_sympd);
-      }
-      for (unsigned j = 0; j < P; j++) { // update B
-        uvec subrow = find(Z.col(j) == 1);
-        uvec subcol = {j};
-        arma::mat A_filter = new_A.cols(subrow);
-        vec S_selected = vectorise(S.col(j));
-        vec S_filter = S_selected.elem(subrow);
-        new_B.col(j) = solve(A_filter * A_filter.t() + lambda * eye(K, K),
-                  A_filter * S_filter,
-                  solve_opts::likely_sympd);
-      }
+      new_A = ALS_update(S, Z, A, B, K, lambda, true);
+      new_B = ALS_update(S, Z, new_A, B, K, lambda, false);
+      // for (unsigned i = 0; i < N; i++) { // update A
+      //   uvec subrow = {i};
+      //   uvec subcol = find(Z.row(i) == 1);
+      //   arma::mat B_filter = B.cols(subcol);
+      //   vec S_selected = vectorise(S.row(i));
+      //   vec S_filter = S_selected.elem(subcol);
+      //   new_A.col(i) = solve(B_filter * B_filter.t() + lambda * eye(K, K),
+      //             B_filter * S_filter,
+      //             solve_opts::likely_sympd);
+      // }
+      // for (unsigned j = 0; j < P; j++) { // update B
+      //   uvec subrow = find(Z.col(j) == 1);
+      //   uvec subcol = {j};
+      //   arma::mat A_filter = new_A.cols(subrow);
+      //   vec S_selected = vectorise(S.col(j));
+      //   vec S_filter = S_selected.elem(subrow);
+      //   new_B.col(j) = solve(A_filter * A_filter.t() + lambda * eye(K, K),
+      //             A_filter * S_filter,
+      //             solve_opts::likely_sympd);
+      // }
     }
     arma::mat new_S_lowrank = new_A.t() * new_B;
     A = new_A;

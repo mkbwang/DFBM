@@ -12,8 +12,10 @@ RoxygenNote: 7.3.2
 Imports:
   Matrix,
   Rcpp (>= 1.0.5),
-  RcppArmadillo (>= 0.10.1.2.0),
+  RcppArmadillo (>= 14.0.0),
+  RcppParallel (>= 5.0.0),
   pROC
 LinkingTo:
   Rcpp,
-  RcppArmadillo
+  RcppArmadillo,
+  RcppParallel
