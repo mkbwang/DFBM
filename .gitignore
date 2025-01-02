@@ -1,5 +1,16 @@
 __pycache__
 *.csv
 *.pkl
+*.txt
+*.mtx
+*.tsv
+*.rds
 *.ipynb
 *.idea
+*.Rhistory
+python_archive/
+.Rproj.user
+*.o
+*.so
+*.png
+*.jpg

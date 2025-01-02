@@ -1,0 +1,21 @@
+Package: NDBEC
+Title: Nonparametric denoising and batch effect removal for single cell omics data
+Version: 0.0.0.9000
+Authors@R: 
+    person("Mukai", "Wang", , "wangmk@umich.edu", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-1413-1904"))
+Description: Nonparametric denoising and batch effect removal for single cell omics data.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Imports:
+  Matrix,
+  Rcpp (>= 1.0.5),
+  RcppArmadillo (>= 14.0.0),
+  RcppParallel (>= 5.0.0),
+  pROC
+LinkingTo:
+  Rcpp,
+  RcppArmadillo,
+  RcppParallel
