@@ -59,6 +59,7 @@ nbmf <- function(Y, Z, k=2, max_iter=500, eps=1e-6, tol=1e-5){
   pi <- A %*% B
 
   loss <- negloglik(Y, Z, pi)
+  avg_loss <- loss / sum(Z)
   # iterate until convergence
   iter <- 0
   while (iter < 500){
@@ -83,6 +84,7 @@ nbmf <- function(Y, Z, k=2, max_iter=500, eps=1e-6, tol=1e-5){
 
     new_pi <- new_A %*% new_B
     new_loss <- negloglik(Y, Z, new_pi)
+    avg_loss <- c(avg_loss, new_loss / sum(Z))
 
     A <- new_A
     B <- new_B
@@ -98,7 +100,7 @@ nbmf <- function(Y, Z, k=2, max_iter=500, eps=1e-6, tol=1e-5){
   pi_all[rows_include, columns_include] <- pi
   converge <- ifelse(iter < max_iter, TRUE, FALSE)
   return(list(rows = rows_include, columns=columns_include,
-              A=A, B=B, pi=pi_all, loss = loss, AIC=AIC,
+              A=A, B=B, pi=pi_all, loss = avg_loss, AIC=AIC,
               iter=iter, converge=converge))
 }
 
