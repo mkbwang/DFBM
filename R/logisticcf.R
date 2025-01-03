@@ -114,46 +114,75 @@ cfR <- function(S, Z, K, lambda, max_iter=1000, tol=1e-4, cap=10, init_A=NULL, i
   return(list(A=A, B=B, S_lowrank=S_lowrank, n_iter = iter, mse_trace=mse_trace))
 }
 
-logisticcfR <- function(X, Z, K, lambda, max_iter=1000, tol=1e-5, cap=10){
+log1exp <- function(x){
+  output <- x
+  output[x<20] <- log(1+exp(x[x<20]))
+  return(output)
+}
+
+penalized_loss <- function(X, Z, A, B, lambda){
+  # X: binary matrix, N*P
+  # Z: binary mask, N*P
+  # A: latent matrix A, K*N
+  # B: latent matrix B, K*P
+  # lambda: regularization parameter
+  S <- t(A) %*% B
+  logloss <- sum(-Z*(X*S - log1exp(S)))
+  ridge_penalty <- lambda * (sum(A[-1, ]^2) + sum(B[-1, ]^2))
+  return((logloss + ridge_penalty)/sum(Z))
+}
+
+logisticcfR <- function(X, Z, K, lambda, max_iter=1000, tol=1e-5){
   # X: user-item matrix
   # K: number of latent factors
   # lambda: regularization parameter
   # max_iter: maximum number of iterations
   # tol: tolerance
-  # cap: limit the maximum of the absolute value in S
 
   # initialize parameters
   N <- nrow(X) # number of rows
   P <- ncol(X) # number of columns
-  full_mask <- Z > 0
-  n_obs <- sum(Z)
   W <- 2*X - 1
 
-  init_values <- cfR(S=4*W, Z=Z, K=K, lambda=lambda, max_iter=max_iter, tol=tol, cap=cap)
-  A <- init_values$A
-  B <- init_values$B
-  S <- init_values$S_lowrank
-  pi <- 1/(1 + exp(-S))
-  llk <- sum(X[full_mask]*log(pi[full_mask]) + (1-X[full_mask])*log(1-pi[full_mask])) / n_obs
-  loss <- rep(0, max_iter)
-  iter <- 0
-  while(iter < max_iter){
-    S_star <- S + 4*W/(1+exp(W*S))
-    new_values <- cfR(S=S_star, Z=Z, K=K, lambda=lambda, max_iter=max_iter, tol=tol, cap=cap,
-                     init_A=A, init_B=B)
-    A <- new_values$A
-    B <- new_values$B
-    S <- new_values$S_lowrank
-    pi <- 1/(1 + exp(-S))
-    new_llk <- sum(X[full_mask]*log(pi[full_mask]) + (1-X[full_mask])*log(1-pi[full_mask])) / n_obs
-    iter <- iter + 1
-    loss[iter] <- -new_llk
-    if (new_llk - llk < tol){
-      llk <- new_llk
+  # initialize A
+  A <- matrix(rnorm(N*K, mean=0, sd=0.1), K, N)
+  A[1, ] <- rowSums(W*Z)/rowSums(Z)
+  B <- matrix(rnorm(P*K, mean=0, sd=0.1), K, P)
+  B[1, ] <- colSums(W*Z)/colSums(Z)
+  S <- t(A) %*% B
+
+  Lambda <- diag(nrow=K, ncol=K)*lambda
+  Lambda[1, 1] <- 0 # the first row of A and B are not penalized
+
+  loss <- penalized_loss(X, Z, A, B, lambda)
+  loss_trace <- rep(0, max_iter+1)
+  loss_trace[1] <- loss
+  iter <- 1
+  while(iter <= max_iter){
+    # update A
+    pi <- 1/(1+exp(-S))
+    g_star <- -B %*% (t(Z)*t(X)) + B %*% (t(Z)*t(pi)) + 2*(Lambda %*% A)
+    f_star <- 0.25 * (B*B) %*% t(Z) + 2*(Lambda %*% matrix(1, nrow=K, ncol=N))
+    A <- A - g_star/(2*f_star)
+
+    # update B
+    S_dagger <- t(A) %*% B
+    pi_dagger <- 1/(1+exp(-S_dagger))
+    g_dagger <- -A %*% (Z*X) + A %*% (Z*pi_dagger) + 2*(Lambda %*% B)
+    f_dagger <- 0.25 * (A*A) %*% Z + 2*(Lambda %*% matrix(1, nrow=K, ncol=P))
+    B <- B - g_dagger/(2*f_dagger)
+
+    S <- t(A) %*% B
+    new_loss <- penalized_loss(X, Z, A, B, lambda)
+    iter <- iter  + 1
+    loss_trace[iter] <- new_loss
+    if (loss - new_loss < tol){
+      loss <- new_loss
       break
     } else{
-      llk <- new_llk
+      loss <- new_loss
     }
   }
-  return(list(A=A, B=B, pi=pi, loss_trace=loss[1:iter]))
+  pi <- 1/(1 + exp(-S))
+  return(list(A=A, B=B, pi=pi, loss_trace=loss_trace[1:iter]))
 }
