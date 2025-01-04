@@ -20,14 +20,17 @@ arma::mat log1exp(const arma::mat &input){
 }
 
 // ridge logloss
-double penalized_loss(const arma::mat &X, const arma::mat &Z,
-                         const arma::mat &A, const arma::mat &B,
-                         const arma::mat& A_penalty, const arma::mat& B_penalty){
+double penalized_loss(const arma::mat &S, const arma::uvec &nonzero_xz_index,
+                      const arma::uvec & nonzero_z_index, const arma::vec &lambda_vec,
+                         const arma::mat& A2, const arma::mat& B2){
 
-  arma::mat S = A.t() * B;
-  double logloss = accu(-Z % (X % S - log1exp(S)));
-  double ridge = accu(A_penalty % A % A) + accu(B_penalty % B % B);
-  double mean_loss = (logloss + ridge) / accu(Z);
+  arma::mat log1S = log1exp(S);
+  double logloss =  -accu(S.elem(nonzero_xz_index)) + accu(log1S.elem(nonzero_z_index));
+  double ridge = accu(A2.each_col() % lambda_vec) + accu(B2.each_col() % lambda_vec);
+  // arma::mat S = A.t() * B;
+  // double logloss = accu(-Z % (X % S - log1exp(S)));
+  // double ridge = accu(A_penalty % A % A) + accu(B_penalty % B % B);
+  double mean_loss = (logloss + ridge) / nonzero_z_index.n_elem;
   return mean_loss;
 
 }

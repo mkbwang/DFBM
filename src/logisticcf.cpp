@@ -13,25 +13,40 @@ List logisticcf(const arma::mat &X, const arma::mat &Z,
   unsigned N = X.n_rows;
   unsigned P = X.n_cols;
   arma::mat W = 2*X- 1;
-  arma::mat XZ = X % Z;
-  arma::mat WZ = W % Z;
+  arma::mat X_t = X.t();
+  arma::mat Z_t = Z.t();
+  uvec nonzero_z_index = find(Z > 0);
+  arma::mat XZ = mat(N, P, fill::zeros);
+  XZ.elem(nonzero_z_index) = X.elem(nonzero_z_index);
+  uvec nonzero_xz_index = find(XZ > 0);
+  arma::mat XZ_t = XZ.t();
+  arma::mat WZ = mat(N, P, fill::zeros);
+  WZ.elem(nonzero_z_index) = W.elem(nonzero_z_index);
 
   // initialize A and B
   arma::mat A = 0.1 * arma::randn(K, N);
   arma::vec rowmeanW = sum(WZ, 1) / sum(Z, 1);
   A.row(0) = rowmeanW.t();
+  arma::mat A2 = square(A);
   arma::mat B = 0.1 * arma::randn(K, P);
   B.row(0) = sum(WZ, 0) / sum(Z, 0);
+  arma::mat B2 = square(B);
 
   arma::mat S = A.t() * B;
   arma::mat pi = 1.0 / (1.0 + exp(-S));
+  arma::mat pi_Z = mat(N, P, fill::zeros);
+  pi_Z.elem(nonzero_z_index) = pi.elem(nonzero_z_index);
 
-  arma::mat A_penalty = mat(A.n_rows, A.n_cols, fill::value(lambda));
-  A_penalty.row(0).fill(0); // first row does not have penalty
-  arma::mat B_penalty = mat(B.n_rows, B.n_cols, fill::value(lambda));
-  B_penalty.row(0).fill(0); // first row does not have penalty
+  arma::vec lambda_vec = lambda * arma::ones(K);
+  lambda_vec(0) = 0; // first row does not have penalty
+  // arma::mat A_penalty = mat(A.n_rows, A.n_cols, fill::value(lambda));
+  // A_penalty.row(0).fill(0); // first row does not have penalty
+  // arma::mat B_penalty = mat(B.n_rows, B.n_cols, fill::value(lambda));
+  // B_penalty.row(0).fill(0); // first row does not have penalty
 
-  double loss = penalized_loss(X, Z, A, B, A_penalty, B_penalty);
+  double loss = penalized_loss(S, nonzero_xz_index, nonzero_z_index,
+                               lambda_vec, A2, B2);
+
   arma::vec loss_trace(max_iter+1, fill::zeros);
   loss_trace(0) = loss;
   unsigned iter = 0;
@@ -39,20 +54,29 @@ List logisticcf(const arma::mat &X, const arma::mat &Z,
   while (iter < max_iter){
 
     // update A
-    arma::mat g_star = -B * XZ.t()  + B * (Z.t() % pi.t()) + 2 * (A_penalty % A);
-    arma::mat f_star = 0.25 * (B % B) * Z.t() + 2 * A_penalty;
+    arma::mat g_star = B * (pi_Z.t() - XZ_t);
+    g_star += 2 * (A.each_col() % lambda_vec);
+    arma::mat f_star = 0.25 * B2 * Z_t;
+    f_star.each_col() += 2*lambda_vec;
     A = A - g_star / (2*f_star);
+    A2 = square(A);
 
     // update B
     S = A.t() * B;
     pi = 1.0 / (1.0 + exp(-S));
-    arma::mat g_dagger = -A * XZ + A * (Z % pi) + 2 * (B_penalty % B);
-    arma::mat f_dagger = 0.25 * (A % A) * Z + 2 * B_penalty;
+    pi_Z.elem(nonzero_z_index) = pi.elem(nonzero_z_index);
+    arma::mat g_dagger = A * (pi_Z - XZ);
+    g_dagger += 2*(B.each_col() % lambda_vec);
+    arma::mat f_dagger = 0.25 * A2 * Z;
+    f_dagger.each_col() += 2*lambda_vec;
     B = B - g_dagger / (2*f_dagger);
+    B2 = square(B);
 
     S = A.t() * B;
     pi = 1.0 / (1.0 + exp(-S));
-    double new_loss = penalized_loss(X, Z, A, B, A_penalty, B_penalty);
+    pi_Z.elem(nonzero_z_index) = pi.elem(nonzero_z_index);
+    double new_loss = penalized_loss(S, nonzero_xz_index, nonzero_z_index,
+                                     lambda_vec, A2, B2);
 
     iter++;
     loss_trace(iter) = new_loss;

@@ -12,7 +12,7 @@ mask <- matrix(1, nrow=nrow(count_mat),
 nonzero_indices <- which(mask > 0, arr.ind=T)
 
 
-train_index <- sample(nrow(nonzero_indices), nrow(nonzero_indices)*0.1)
+train_index <- sample(nrow(nonzero_indices), nrow(nonzero_indices)*0.8)
 train_indices <- nonzero_indices[train_index, ]
 validation_indices <- nonzero_indices[-train_index, ]
 mask_train <- mask
@@ -27,14 +27,14 @@ slice_0_train[validation_indices] <- NA
 
 # fit with cxx implementation of logisticcf
 begin <- proc.time()
-result_0_cxx <- logisticcf(slice_0, mask_train, 2, 0.1, 1000, 1e-5)
+result_0_cxx <- logisticcf(slice_0, mask_train, 10, 0.1, 1000, 1e-5)
 cxx_validation_probs <- result_0_cxx$pi[validation_indices]
 end <- proc.time()
 end-begin
 
 # fit with R implementation of logisticcf
 begin <- proc.time()
-result_0_r <- logisticcfR(slice_0, mask_train, K=2, lambda=0.1, tol=1e-5)
+result_0_r <- logisticcfR(slice_0, mask_train, K=1, lambda=0.1, tol=2e-5)
 r_validation_probs <- result_0_r$pi[validation_indices]
 end <- proc.time()
 end-begin
@@ -77,8 +77,8 @@ values <- matrix(rbinom(n=100, size=1, prob=0.6),
                   nrow=10, ncol=10)
 observed_values <- values * mask
 
-result_r <- logisticcfR(mask, mask, K=3, lambda=0.01, tol=1e-5)
-
+result_r <- logisticcfR(observed_values, mask, K=3, lambda=0.01, tol=1e-5)
+result_cxx <- logisticcf(observed_values, mask, 1, 0.1, 1000, 1e-5)
 
 
 
