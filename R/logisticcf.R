@@ -143,6 +143,7 @@ logisticcfR <- function(X, Z, K, lambda, max_iter=1000, tol=1e-5){
   N <- nrow(X) # number of rows
   P <- ncol(X) # number of columns
   W <- 2*X - 1
+  XZ <-  X * Z
 
   # initialize A
   A <- matrix(rnorm(N*K, mean=0, sd=0.1), K, N)
@@ -151,8 +152,10 @@ logisticcfR <- function(X, Z, K, lambda, max_iter=1000, tol=1e-5){
   B[1, ] <- colSums(W*Z)/colSums(Z)
   S <- t(A) %*% B
 
-  Lambda <- diag(nrow=K, ncol=K)*lambda
-  Lambda[1, 1] <- 0 # the first row of A and B are not penalized
+  A_penalty <- matrix(lambda, nrow=K, ncol=N)
+  A_penalty[1, ] <- 0
+  B_penalty <- matrix(lambda, nrow=K, ncol=P)
+  B_penalty[1, ] <- 0
 
   loss <- penalized_loss(X, Z, A, B, lambda)
   loss_trace <- rep(0, max_iter+1)
@@ -161,15 +164,15 @@ logisticcfR <- function(X, Z, K, lambda, max_iter=1000, tol=1e-5){
   while(iter <= max_iter){
     # update A
     pi <- 1/(1+exp(-S))
-    g_star <- -B %*% (t(Z)*t(X)) + B %*% (t(Z)*t(pi)) + 2*(Lambda %*% A)
-    f_star <- 0.25 * (B*B) %*% t(Z) + 2*(Lambda %*% matrix(1, nrow=K, ncol=N))
+    g_star <- -B %*% (t(XZ)) + B %*% (t(Z)*t(pi)) + 2 * A_penalty * A
+    f_star <- 0.25 * (B*B) %*% t(Z) + 2*A_penalty
     A <- A - g_star/(2*f_star)
 
     # update B
     S_dagger <- t(A) %*% B
     pi_dagger <- 1/(1+exp(-S_dagger))
-    g_dagger <- -A %*% (Z*X) + A %*% (Z*pi_dagger) + 2*(Lambda %*% B)
-    f_dagger <- 0.25 * (A*A) %*% Z + 2*(Lambda %*% matrix(1, nrow=K, ncol=P))
+    g_dagger <- -A %*% XZ + A %*% (Z*pi_dagger) + 2* B_penalty * B
+    f_dagger <- 0.25 * (A*A) %*% Z + 2*B_penalty
     B <- B - g_dagger/(2*f_dagger)
 
     S <- t(A) %*% B
