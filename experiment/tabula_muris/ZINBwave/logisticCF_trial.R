@@ -26,15 +26,15 @@ slice_0_train[validation_indices] <- NA
 
 
 # fit with cxx implementation of logisticcf
-# begin <- proc.time()
-# result_cxx <- logisticcf(slice_5, slice_0, 4, 10, 1000, 1e-5, 10)
-# # cxx_validation_probs <- result_0_cxx$pi[validation_indices]
-# end <- proc.time()
-# end-begin
+begin <- proc.time()
+result_0_cxx <- logisticcf(slice_0, mask_train, 2, 0.1, 1000, 1e-5)
+cxx_validation_probs <- result_0_cxx$pi[validation_indices]
+end <- proc.time()
+end-begin
 
 # fit with R implementation of logisticcf
 begin <- proc.time()
-result_0_r <- logisticcfR(slice_0, mask_train, K=3, lambda=0.1, tol=1e-5)
+result_0_r <- logisticcfR(slice_0, mask_train, K=2, lambda=0.1, tol=1e-5)
 r_validation_probs <- result_0_r$pi[validation_indices]
 end <- proc.time()
 end-begin
@@ -47,12 +47,15 @@ roc(truth_validation, r_validation_probs)
 mean(truth_validation*log(r_validation_probs)+
        (1-truth_validation)*log(1-r_validation_probs))
 
+roc(truth_validation, cxx_validation_probs)
+mean(truth_validation*log(cxx_validation_probs)+
+       (1-truth_validation)*log(1-cxx_validation_probs))
 
 library(logisticPCA)
 
 # fit with logisticSVD
 begin <- proc.time()
-lsvd_fit <- logisticSVD(x=slice_0_train, k=3, conv_criteria=1e-5)
+lsvd_fit <- logisticSVD(x=slice_0_train, k=2, conv_criteria=1e-5)
 lsvd_probs <- fitted(lsvd_fit, type="response")
 end <- proc.time()
 end - begin
@@ -61,5 +64,21 @@ lsvd_validation_probs <- lsvd_probs[validation_indices]
 roc(truth_validation, lsvd_validation_probs)
 mean(truth_validation*log(lsvd_validation_probs)+
        (1-truth_validation)*log(1-lsvd_validation_probs))
+
+
+
+# test an extremely sparse case
+
+mask <- matrix(0, nrow=10, ncol=10)
+indices <- cbind(sample(10), sample(10))
+mask[indices] <- 1
+
+values <- matrix(rbinom(n=100, size=1, prob=0.6),
+                  nrow=10, ncol=10)
+observed_values <- values * mask
+
+result_r <- logisticcfR(mask, mask, K=3, lambda=0.01, tol=1e-5)
+
+
 
 
