@@ -43,6 +43,7 @@ for (j in 0:(length(selected_quantiles)-1)){
   rows_retain <- seq(1, nrow(count_mat))
   ncols_retain <- seq(1, ncol(count_mat))
 
+  # Do I need to subset rows and columns
   row_sums <- rowSums(mask)
   if (any(row_sums == 0)){
     rows_retain <- which(row_sums > 0)
@@ -58,7 +59,7 @@ for (j in 0:(length(selected_quantiles)-1)){
   }
 
   lcf_fit <- cv.logisticcfR(X=observation, Z=mask,
-                            max_K=7, lambdas=0.1)
+                            max_K=10, lambdas=0.1)
 
   ranks[j+1] <- lcf_fit$selected_K
   estimated_pi <- lcf_fit$pi
@@ -74,6 +75,50 @@ for (j in 0:(length(selected_quantiles)-1)){
 }
 end <- proc.time() - begin
 
+# save the results
+saveRDS(prob_mats, "experiment/scDesign/ndbec_trial_prob_mats.rds")
+interval_vals <- rep(0, length(selected_quantiles))
 
+
+for (j in 1:(length(selected_quantiles)-1)){
+  lower_bound <- selected_quantiles[j]
+  upper_bound <- selected_quantiles[j+1]
+
+  interval_vals[j] <- mean(count_mat[count_mat > lower_bound &
+                                       count_mat <= upper_bound])
+}
+# for the values larger than the largest threshold, I take median
+upper_bound <- selected_quantiles[length(selected_quantiles)]
+interval_vals[length(selected_quantiles)] <- median(count_mat[count_mat > upper_bound])
+
+# calculate expected counts
+expected_counts <- matrix(0, nrow=nrow(count_mat), ncol=ncol(count_mat))
+for (j in 1:length(selected_quantiles)){
+
+  if (j==1){
+    sprob1 <- prob_mats[[1]]
+  } else{
+    sprob1 <- sprob1*prob_mats[[j]]
+  }
+
+  if (j==length(selected_quantiles)){
+    sprob2 <- 0
+  } else{
+    sprob2 <- sprob1*prob_mats[[j+1]]
+  }
+  expected_counts <- expected_counts + interval_vals[j] * (sprob1 - sprob2)
+
+}
+
+
+prob_gt0 <- prob_mats[[1]]
+
+write.table(data.frame(prob_gt0),
+            "experiment/scDesign/ndbec_trial_prob_gt0.tsv",
+            sep='\t', quote=FALSE, row.names=TRUE, col.names=TRUE)
+
+write.table(data.frame(expected_counts),
+            "experiment/scDesign/ndbec_trial_expected_counts.tsv",
+            sep='\t', quote=FALSE, row.names=TRUE, col.names=TRUE)
 
 
