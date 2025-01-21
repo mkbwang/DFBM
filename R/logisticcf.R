@@ -109,32 +109,36 @@ cv.logisticcfR <- function(X, Z, max_K=10, lambdas=c(0.01, 0.1, 1)){
     Z_validation <- Z_validation[selected_rows, selected_cols]
   }
 
+  upper_bound_K <- ceiling(sum(Z_train)/(nrow(Z_train) + ncol(Z_train)))
+  max_K <- min(max_K, upper_bound_K)
+
   validation_losses <- matrix(0, nrow=max_K, ncol=length(lambdas))
 
   rank_1_fit <- logisticcfR(X_subset, Z_train, K=1, lambda=0)
   validation_losses[1, ] <- penalized_loss(X_subset, Z_validation,
                                            rank_1_fit$A, rank_1_fit$B,
                                            lambda=0)
-  print(sprintf("Rank 1 validation loss is: %f", validation_losses[1, 1]))
+  # (sprintf("Rank 1 validation loss is: %f", validation_losses[1, 1]))
   selected_K <- 1
   selected_lambda <- 0
-
-  for (k in 2:max_K){
-    print(sprintf("Fitting rank %d models", k))
-    for (j in 1:length(lambdas)){
-      fit <- logisticcfR(X_subset, Z_train, K=k, lambda=lambdas[j])
-      validation_losses[k, j] <- penalized_loss(X_subset, Z_validation,
-                                                fit$A, fit$B, lambda=0)
-    }
-    print(sprintf("Minimum Rank %d validation loss is: %f", k, min(validation_losses[k, ])))
-    if (min(validation_losses[k, ]) < min(validation_losses[k-1, ])){
-      selected_K <- k
-      selected_lambda <- lambdas[which.min(validation_losses[k, ])]
-    } else{ # end early if the validation loss begins to increase
-      break
+  if (max_K > 1){
+    for (k in 2:max_K){
+      # print(sprintf("Fitting rank %d models", k))
+      for (j in 1:length(lambdas)){
+        fit <- logisticcfR(X_subset, Z_train, K=k, lambda=lambdas[j])
+        validation_losses[k, j] <- penalized_loss(X_subset, Z_validation,
+                                                  fit$A, fit$B, lambda=0)
+      }
+      # print(sprintf("Minimum Rank %d validation loss is: %f", k, min(validation_losses[k, ])))
+      if (min(validation_losses[k, ]) < min(validation_losses[k-1, ])){
+        selected_K <- k
+        selected_lambda <- lambdas[which.min(validation_losses[k, ])]
+      } else{ # end early if the validation loss begins to increase
+        break
+      }
     }
   }
-  print("Fitting the final model...")
+  # print("Fitting the final model...")
   # refit a final model with the selected K and lambda
   final_model <- logisticcfR(X, Z, K=selected_K, lambda=selected_lambda)
 
