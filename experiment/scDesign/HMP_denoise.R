@@ -36,6 +36,65 @@ full_counts <- readRDS("experiment/scDesign/HMP/ZINB_sim.rds") |> t()
 write.table(full_counts, "experiment/scDesign/HMP/full_sim.txt", sep="\t",
             quote=FALSE, row.names=TRUE)
 
+nb_denoise_1 <- ndbec(count_mat=nb_counts,
+                      quantiles=seq(0.1, 0.9, 0.1),
+                      increment=0.1,
+                      max_K=10,
+                      lambdas=0.1)
+
+write.table(nb_denoise_1$denoised_counts, file="experiment/scDesign/HMP/NDBEC/nb_denoise_1.txt",
+            sep='\t', quote=FALSE, row.names=TRUE)
+
+
+nb_denoise_2 <- ndbec(count_mat=nb_counts,
+                      quantiles=seq(0.1, 0.9, 0.1),
+                      increment=0.2,
+                      max_K=10,
+                      lambdas=0.1)
+
+write.table(nb_denoise_2$denoised_counts, file="experiment/scDesign/HMP/NDBEC/nb_denoise_2.txt",
+            sep='\t', quote=FALSE, row.names=TRUE)
+
+
+nb_denoise_3 <- ndbec(count_mat=nb_counts,
+                      quantiles=seq(0.1, 0.9, 0.1),
+                      increment=0.3,
+                      max_K=10,
+                      lambdas=0.1)
+
+write.table(nb_denoise_3$denoised_counts, file="experiment/scDesign/HMP/NDBEC/nb_denoise_3.txt",
+            sep='\t', quote=FALSE, row.names=TRUE)
+
+
+nb_denoise_4 <- ndbec(count_mat=nb_counts,
+                      quantiles=seq(0.1, 0.9, 0.1),
+                      increment=0.4,
+                      max_K=10,
+                      lambdas=0.1)
+
+write.table(nb_denoise_4$denoised_counts, file="experiment/scDesign/HMP/NDBEC/nb_denoise_4.txt",
+            sep='\t', quote=FALSE, row.names=TRUE)
+
+
+nb_denoise_5 <- ndbec(count_mat=nb_counts,
+                      quantiles=seq(0.1, 0.9, 0.1),
+                      increment=0.5,
+                      max_K=10,
+                      lambdas=0.1)
+
+write.table(nb_denoise_5$denoised_counts, file="experiment/scDesign/HMP/NDBEC/nb_denoise_5.txt",
+            sep='\t', quote=FALSE, row.names=TRUE)
+
+
+nb_denoise_6 <- ndbec(count_mat=nb_counts,
+                      quantiles=seq(0.1, 0.9, 0.1),
+                      increment=0.6,
+                      max_K=10,
+                      lambdas=0.1)
+
+write.table(nb_denoise_6$denoised_counts, file="experiment/scDesign/HMP/NDBEC/nb_denoise_6.txt",
+            sep='\t', quote=FALSE, row.names=TRUE)
+
 
 nb_denoise_7 <- ndbec(count_mat=nb_counts,
                       quantiles=seq(0.1, 0.9, 0.1),
@@ -66,35 +125,70 @@ write.table(nb_denoise_9$denoised_counts, file="experiment/scDesign/HMP/NDBEC/nb
             sep='\t', quote=FALSE, row.names=TRUE)
 
 
-poisson_denoise_7 <- ndbec(count_mat=poisson_counts,
-                         quantiles=seq(0.1, 0.9, 0.1),
-                         increment=0.7,
-                         max_K=10,
-                         lambdas=0.1)
 
-write.table(poisson_denoise_7$denoised_counts, file="experiment/scDesign/HMP/NDBEC/poisson_denoise_7.txt",
+
+
+zinb_denoise_1 <- ndbec(count_mat=nb_counts,
+                        quantiles=seq(0.1, 0.9, 0.1),
+                        increment=0.1,
+                        max_K=10,
+                        lambdas=0.1)
+
+write.table(zinb_denoise_1$denoised_counts, file="experiment/scDesign/HMP/NDBEC/zinb_denoise_1.txt",
             sep='\t', quote=FALSE, row.names=TRUE)
 
 
-poisson_denoise_8 <- ndbec(count_mat=poisson_counts,
-                           quantiles=seq(0.1, 0.9, 0.1),
-                           increment=0.8,
-                           max_K=10,
-                           lambdas=0.1)
+zinb_denoise_2 <- ndbec(count_mat=nb_counts,
+                      quantiles=seq(0.1, 0.9, 0.1),
+                      increment=0.2,
+                      max_K=10,
+                      lambdas=0.1)
 
-write.table(poisson_denoise_8$denoised_counts, file="experiment/scDesign/HMP/NDBEC/poisson_denoise_8.txt",
+write.table(zinb_denoise_2$denoised_counts, file="experiment/scDesign/HMP/NDBEC/zinb_denoise_2.txt",
             sep='\t', quote=FALSE, row.names=TRUE)
 
 
-poisson_denoise_9 <- ndbec(count_mat=poisson_counts,
-                           quantiles=seq(0.1, 0.9, 0.1),
-                           increment=0.9,
-                           max_K=10,
-                           lambdas=0.1)
+zinb_denoise_3 <- ndbec(count_mat=zinb_counts,
+                        quantiles=seq(0.1, 0.9, 0.1),
+                        increment=0.3,
+                        max_K=10,
+                        lambdas=0.1)
 
-
-write.table(poisson_denoise_9$denoised_counts, file="experiment/scDesign/HMP/NDBEC/poisson_denoise_9.txt",
+write.table(zinb_denoise_3$denoised_counts, file="experiment/scDesign/HMP/NDBEC/zinb_denoise_3.txt",
             sep='\t', quote=FALSE, row.names=TRUE)
+
+
+zinb_denoise_4 <- ndbec(count_mat=zinb_counts,
+                        quantiles=seq(0.1, 0.9, 0.1),
+                        increment=0.4,
+                        max_K=10,
+                        lambdas=0.1)
+
+
+write.table(zinb_denoise_4$denoised_counts, file="experiment/scDesign/HMP/NDBEC/zinb_denoise_4.txt",
+            sep='\t', quote=FALSE, row.names=TRUE)
+
+
+zinb_denoise_5 <- ndbec(count_mat=zinb_counts,
+                      quantiles=seq(0.1, 0.9, 0.1),
+                      increment=0.5,
+                      max_K=10,
+                      lambdas=0.1)
+
+write.table(zinb_denoise_5$denoised_counts, file="experiment/scDesign/HMP/NDBEC/zinb_denoise_5.txt",
+            sep='\t', quote=FALSE, row.names=TRUE)
+
+
+
+zinb_denoise_6 <- ndbec(count_mat=zinb_counts,
+                        quantiles=seq(0.1, 0.9, 0.1),
+                        increment=0.6,
+                        max_K=10,
+                        lambdas=0.1)
+
+write.table(zinb_denoise_6$denoised_counts, file="experiment/scDesign/HMP/NDBEC/zinb_denoise_6.txt",
+            sep='\t', quote=FALSE, row.names=TRUE)
+
 
 
 zinb_denoise_7 <- ndbec(count_mat=zinb_counts,

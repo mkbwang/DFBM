@@ -1,7 +1,7 @@
 
 rm(list=ls())
 library(phyloseq)
-data <- readRDS("experiment/COHRA2/phyasv_visit24.rds")
+data <- readRDS("experiment/COHRA2/phyasv_visit12.rds")
 
 metadata <- sample_data(data) |> as.data.frame()
 sample_filter <- grepl("pre-incident", metadata$CaseStatus)
@@ -30,7 +30,7 @@ for (j in 1:9){
                            lambdas=0.1)
   thresholds[j] <- length(denoised_output$thresholds)
   write.csv(as.data.frame(denoised_output$denoised_counts),
-            sprintf("experiment/COHRA2/denoise/16S_yr2_%d.csv", j),
+            sprintf("experiment/COHRA2/denoise/16S_yr1_%d.csv", j),
             quote=F, row.names = F)
 
 }
@@ -41,12 +41,12 @@ for (j in 1:9){
 # export metadata and expected counts
 
 write.csv(data.frame(metadata_subset),
-          "experiment/COHRA2/metadata_yr2.csv",
+          "experiment/COHRA2/metadata_yr1.csv",
           quote=F)
 
 
 write.csv(as.data.frame(counts_subset),
-          "experiment/COHRA2/16S_counts_yr2.csv",
+          "experiment/COHRA2/16S_counts_yr1.csv",
           quote=F)
 
 

@@ -75,7 +75,8 @@ performance_summary <- function(distribution_truth, metadata, count_mat,
 
 
   ## performance of MAGIC
-  normalized_magic <- row_normalize(magic_denoise, libsize=1000)
+  magic_denoise_sq <- magic_denoise^2
+  normalized_magic <- row_normalize(magic_denoise_sq, libsize=1000)
   magic_performance <- rep(0, nrow(count_mat))
   for (j in 1:nrow(count_mat)){
     magic_performance[j] <- bray_curtis_distance(normalized_true_abundance[j,],
@@ -185,7 +186,7 @@ zinb_truth <- parameter_truth$ZINB
 count_mat_zinb <- read.table("experiment/scDesign/HMP/zinb_sim.txt",
                         header=TRUE, row.names=1, sep="\t") |> as.matrix()
 metadata_zinb <- read.csv("experiment/scDesign/HMP/metadata_zinb.csv")
-ndbec_zinb <- read.table("experiment/scDesign/HMP/NDBEC/zinb_denoise_7.txt",
+ndbec_zinb <- read.table("experiment/scDesign/HMP/NDBEC/zinb_denoise_4.txt",
                             header=TRUE, row.names=1, sep="\t")
 magic_zinb <- read.table("experiment/scDesign/HMP/MAGIC/magic_zinb.tsv",
                          header=TRUE, row.names=1, sep="\t")
@@ -216,7 +217,7 @@ nb_truth <- parameter_truth$NB
 count_mat_nb <- read.table("experiment/scDesign/HMP/NB_sim.txt",
                            header=TRUE, row.names=1, sep="\t") |> as.matrix()
 metadata_nb <- read.csv("experiment/scDesign/HMP/metadata_nb.csv")
-ndbec_nb <- read.table("experiment/scDesign/HMP/NDBEC/nb_denoise_7.txt",
+ndbec_nb <- read.table("experiment/scDesign/HMP/NDBEC/nb_denoise_4.txt",
                          header=TRUE, row.names=1, sep="\t")
 magic_nb <- read.table("experiment/scDesign/HMP/MAGIC/magic_nb.tsv",
                          header=TRUE, row.names=1, sep="\t")

@@ -3,18 +3,18 @@ library(vegan)
 
 
 rm(list=ls())
-data <- readRDS("experiment/COHRA2/phyasv_visit24.rds")
+data <- readRDS("experiment/COHRA2/phyasv_visit12.rds")
 taxonomy_table <- tax_table(data) |> data.frame()
 species_names <- paste(taxonomy_table$Genus,
                        taxonomy_table$Species, sep=" ") |> as.character()
 names(species_names) <- rownames(taxonomy_table)
 
 
-metadata <- read.csv("experiment/COHRA2/metadata_yr2.csv", row.names=1)
+metadata <- read.csv("experiment/COHRA2/metadata_yr1.csv", row.names=1)
 
 diagnoses <-metadata$CaseEver == "Case"
 
-raw_counts <- read.csv("experiment/COHRA2/16S_counts_yr2.csv", row.names=1)
+raw_counts <- read.csv("experiment/COHRA2/16S_counts_yr1.csv", row.names=1)
 raw_relabd <- t(apply(raw_counts, 1, function(row) {
   row_sum <- sum(row)
   row / row_sum
@@ -22,7 +22,7 @@ raw_relabd <- t(apply(raw_counts, 1, function(row) {
 
 F_statistics <- rep(0, 9)
 for (j in 1:9){
-  denoised_counts <- read.csv(sprintf("experiment/COHRA2/denoise/16S_yr2_%d.csv", j))
+  denoised_counts <- read.csv(sprintf("experiment/COHRA2/denoise/16S_yr1_%d.csv", j))
   denoised_relabd <- t(apply(denoised_counts, 1, function(row) {
     row_sum <- sum(row)
     row / row_sum
@@ -31,7 +31,7 @@ for (j in 1:9){
   denoised_permanova <- adonis2(formula=denoised_bray ~ diagnoses, permutations=999)
   F_statistics[j] <- denoised_permanova$F[1]
 }
-denoised_counts <- read.csv(sprintf("experiment/COHRA2/denoise/16S_yr2_%d.csv", 4))
+denoised_counts <- read.csv(sprintf("experiment/COHRA2/denoise/16S_yr1_%d.csv", 6))
 denoised_relabd <- t(apply(denoised_counts, 1, function(row) {
   row_sum <- sum(row)
   row / row_sum
@@ -168,7 +168,7 @@ original_top_features <- data.frame(Name=top_feature_names,
                                     Frequency=top_feature_frequencies,
                                     Taxonomy = species_names[top_feature_names])
 
-write.csv(original_top_features, "experiment/COHRA2/plots/original_top_features_yr2.csv",
+write.csv(original_top_features, "experiment/COHRA2/plots/original_top_features_yr1.csv",
           row.names=FALSE)
 
 
@@ -185,7 +185,7 @@ denoised_top_features <- data.frame(Name=top_feature_names,
                                     Taxonomy = species_names[top_feature_names])
 
 
-write.csv(denoised_top_features, "experiment/COHRA2/plots/denoised_top_features_yr2.csv",
+write.csv(denoised_top_features, "experiment/COHRA2/plots/denoised_top_features_yr1.csv",
           row.names=FALSE)
 
 
