@@ -116,7 +116,7 @@ ndbec <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
 
   return(list(thresholds=selected_thresholds,
               optimal_ranks = ranks,
-              prob_gt_0 = prob_mats[[1]],
+              prob_mats = prob_mats,
               denoised_counts=expected_counts))
 
 

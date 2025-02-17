@@ -34,7 +34,7 @@ end-begin
 
 # fit with R implementation of logisticcf
 begin <- proc.time()
-result_0_r <- logisticcfR(slice_0, mask_train, K=1, lambda=0.1, tol=2e-5)
+result_0_r <- logisticcfR(slice_0, mask_train, K=10, lambda=0.1, tol=1e-5)
 r_validation_probs <- result_0_r$pi[validation_indices]
 end <- proc.time()
 end-begin

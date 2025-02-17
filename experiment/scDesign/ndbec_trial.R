@@ -16,7 +16,7 @@ for (i in 1:length(quantiles)){
 selected_order <- c(1)
 j <- 1
 while (j < length(quantiles)){
-  next_j <- min(which(sum_series < sum_series[j] * 0.8))
+  next_j <- min(which(sum_series < sum_series[j] * 0.9))
   selected_order <- c(selected_order, next_j)
   j <- next_j
 }

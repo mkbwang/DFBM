@@ -1,6 +1,7 @@
 
 
 rm(list=ls())
+library(reshape2)
 
 # load the true distribution parameters
 parameters <- readRDS("experiment/scDesign/HMP/fitted_parameters.rds")
@@ -40,16 +41,22 @@ selected_samples <- c(plaque_samples, tongue_samples, throat_samples)
 
 zinb_count_subset <- zinb_counts[selected_samples, selected_columns]
 
-plot_heatmap <- function(input_matrix, color.low="black", color.high="white",
-                         min=0, max=1){
+plot_heatmap <- function(input_matrix, mask = NULL, color.low="black", color.high="white",
+                         color.na="#166919", min=0, max=1){
   rownames(input_matrix) <- NULL
   colnames(input_matrix) <- NULL
+
+  if(!is.null(mask)){
+    rownames(mask) <- NULL
+    colnames(mask) <- NULL
+    input_matrix[mask == 0] <- NA
+  }
 
   long_matrix <- melt(input_matrix)
 
   plot_object <- ggplot(data = long_matrix, aes(x = Var2, y = Var1, fill = value)) +
     geom_tile() + labs(x = NULL, y=NULL, fill=NULL) +
-    scale_fill_gradient2(low=color.low, high=color.high,
+    scale_fill_gradient2(low=color.low, high=color.high, na.value=color.na,
                          limits=c(min, max), oob=scales::squish)+
     theme_void()+
     theme(axis.text.x=element_blank(),
@@ -89,6 +96,12 @@ for (j in 1:length(threshold_values)){
                                          min=0, max=1)
 }
 
+binary_slice_withNA_plot <- list()
+for (j in 1:(length(threshold_values)-1)){
+  binary_slice_withNA_plot[[j]] <- plot_heatmap(binary_slices[[j+1]], mask = binary_slices[[j]],
+                                           color.low="white", color.high="#5c5e5d", color.na="#4648c2",
+                                           min=0, max=1)
+}
 
 
 estim_probs <- list()

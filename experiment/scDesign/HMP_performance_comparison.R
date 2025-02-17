@@ -70,7 +70,7 @@ performance_summary <- function(distribution_truth, metadata, count_mat,
     ndbec_performance[j] <- bray_curtis_distance(normalized_true_abundance[j,],
                                                  normalized_ndbec[j,])
   }
-  ndbec_performance_df <- data.frame(BCdist=ndbec_performance, Source="NDBEC",
+  ndbec_performance_df <- data.frame(BCdist=ndbec_performance, Source="Proposed",
                                      Type=metadata$Type)
 
 
@@ -151,7 +151,7 @@ performance_summary <- function(distribution_truth, metadata, count_mat,
 
   combined_performance$Source <- factor(combined_performance$Source,
                                         levels=c("Raw", "MAGIC", "SAVER", "scImpute", "DCA",
-                                                 "AutoClass", "ALRA", "NDBEC"))
+                                                 "AutoClass", "ALRA", "Proposed"))
 
   return(combined_performance)
 
@@ -162,7 +162,7 @@ plot_summary <- function(summary_df, min=0, max=0.8, gap=0.1){
 
   summary_df$cm <- 1
   summary_df$cm[summary_df$Source == "Raw"] <- 2
-  summary_df$cm[summary_df$Source == "NDBEC"] <- 3
+  summary_df$cm[summary_df$Source == "Proposed"] <- 3
   summary_df$cm <- factor(summary_df$cm)
 
   cmaps <- c("#575656", "black", "#105aa3")
