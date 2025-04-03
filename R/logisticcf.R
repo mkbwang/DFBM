@@ -1,5 +1,11 @@
 
-
+#' log one plus exponential
+#'
+#' @param x a vector
+#' @returns log(1+exp(x))
+#' @details
+#' This function is used to avoid numerical issues when x is too large
+#' @export
 log1exp <- function(x){
   output <- x
   output[x<20] <- log(1+exp(x[x<20]))
@@ -7,6 +13,15 @@ log1exp <- function(x){
 }
 
 
+#' Cross entropy loss plus ridge penalty
+#'
+#' @param X observed binary matrix
+#' @param Z binary mask indicating whether an entry is included in the loss
+#' @param A factor matrix A
+#' @param B factor matrix B expit(A^T*B) is the denoised probability matrix
+#' @param lambda ridge penalty parameter
+#' @return value of loss
+#' @export
 penalized_loss <- function(X, Z, A, B, lambda){
   # X: binary matrix, N*P
   # Z: binary mask, N*P
@@ -20,9 +35,18 @@ penalized_loss <- function(X, Z, A, B, lambda){
 }
 
 
-#' @useDynLib NDBEC
-#' @importFrom Rcpp sourceCpp
-#' @import RcppArmadillo
+
+#' Logistic collaborative filtering
+#'
+#' @param X observed binary matrix
+#' @param Z binary mask indicating whether an entry should be considered when fitting logisticcf
+#' @param K the maximum number of ranks of factorized matrices
+#' @param lambda ridge penalty parameter
+#' @param max_iter maximum number of iterations
+#' @param tol convergence limit of the loss
+#' @importFrom stats rnorm
+#' @return a list containting the factorized functions and the  denoised probabilities
+#' @export
 logisticcfR <- function(X, Z, K, lambda, max_iter=1000, tol=1e-5){
   # X: user-item matrix
   # K: number of latent factors
@@ -80,7 +104,20 @@ logisticcfR <- function(X, Z, K, lambda, max_iter=1000, tol=1e-5){
 }
 
 
-cv.logisticcfR <- function(X, Z, max_K=10, lambdas=c(0.01, 0.1, 1)){
+#' Cross validation to select optimal rank of logisticcf
+#' @param X observed binary matrix
+#' @param Z binary mask indicating whether an entry should be considered when fitting logisticcf
+#' @param max_K maximum number of ranks to try for matrix factorization
+#' @param lambdas ridge penalty parameters
+#' @param ncores number of cores for parallel computing, default 1
+#' @returns optimal choice of factorizedmatrix A and B, denoised probabilities, selected rank
+#'
+#' @importFrom parallel detectCores makeCluster stopCluster clusterExport
+#' @importFrom doParallel registerDoParallel
+#' @importFrom parallelly availableCores
+#' @importFrom foreach foreach %dopar%
+#' @export
+cv.logisticcfR <- function(X, Z, max_K=10, lambdas=c(0.01, 0.1, 1), ncores=1){
 
   dim1 <- nrow(X)
   dim2 <- ncol(X)
@@ -89,6 +126,7 @@ cv.logisticcfR <- function(X, Z, max_K=10, lambdas=c(0.01, 0.1, 1)){
   Z_train <- matrix(0, nrow=dim1, ncol=dim2)
   Z_validation <- matrix(0, nrow=dim1, ncol=dim2)
 
+  # split the entries into training and validation
   nonzero_mask_indices <- which(Z > 0)
   train_indices <- sample(nonzero_mask_indices,
                           size=0.8*length(nonzero_mask_indices))
@@ -104,9 +142,9 @@ cv.logisticcfR <- function(X, Z, max_K=10, lambdas=c(0.01, 0.1, 1)){
     # some rows and columns need to be filtered
     selected_rows <- which(row_sums > 0)
     selected_cols <- which(col_sums > 0)
-    X_subset <- X[selected_rows, selected_cols]
-    Z_train <- Z_train[selected_rows, selected_cols]
-    Z_validation <- Z_validation[selected_rows, selected_cols]
+    X_subset <- X[selected_rows, selected_cols, drop=FALSE]
+    Z_train <- Z_train[selected_rows, selected_cols, drop=FALSE]
+    Z_validation <- Z_validation[selected_rows, selected_cols, drop=FALSE]
   }
 
   upper_bound_K <- ceiling(sum(Z_train)/(nrow(Z_train) + ncol(Z_train)))
@@ -121,14 +159,22 @@ cv.logisticcfR <- function(X, Z, max_K=10, lambdas=c(0.01, 0.1, 1)){
   # (sprintf("Rank 1 validation loss is: %f", validation_losses[1, 1]))
   selected_K <- 1
   selected_lambda <- 0
+  numCores <- min(availableCores(), ncores)
   if (max_K > 1){
     for (k in 2:max_K){
       # print(sprintf("Fitting rank %d models", k))
-      for (j in 1:length(lambdas)){
-        fit <- logisticcfR(X_subset, Z_train, K=k, lambda=lambdas[j])
-        validation_losses[k, j] <- penalized_loss(X_subset, Z_validation,
-                                                  fit$A, fit$B, lambda=0)
-      }
+      cl <- makeCluster(numCores)
+      registerDoParallel(cl)
+      clusterExport(cl, varlist=c("logisticcfR", "penalized_loss", "log1exp"))
+      j <- 1
+      loss_vec <- foreach(j=1:length(lambdas),
+                          .combine=c) %dopar%{
+                            fit <- logisticcfR(X_subset, Z_train, K=k, lambda=lambdas[j])
+                            validation_losses[k, j] <- penalized_loss(X_subset, Z_validation,
+                                                                      fit$A, fit$B, lambda=0)
+                          }
+      validation_losses[k, ] <- loss_vec
+      stopCluster(cl)
       # print(sprintf("Minimum Rank %d validation loss is: %f", k, min(validation_losses[k, ])))
       if (min(validation_losses[k, ]) < min(validation_losses[k-1, ])){
         selected_K <- k

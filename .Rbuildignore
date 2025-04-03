@@ -1,5 +1,7 @@
-^NDBEC\.Rproj$
+^DFBM\.Rproj$
 ^\.Rproj\.user$
 experiment/
 python_archive/
 ^LICENSE\.md$
+R_archived/
+src_archived/

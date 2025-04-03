@@ -1,8 +1,20 @@
 
 
-
-ndbec <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
-                  increment=0.9, max_K=10, lambdas=c(0.01, 0.1, 1)){
+#' Denoise count matrices by factorization of binary masks
+#'
+#' @param count_mat count matrix, nsamples * nfeatures
+#' @param quantiles the candidate thresholds are selected from the quantiles of each feature values
+#' @param increment a value between 0 and 1, at least certain percentage of entries larger than one threshold is smaller than the next threshold
+#' @param max_K maximum number of ranks for binary matrix factorization
+#' @param lambdas ridge penalty parameters to try for the entries in the factorized matrices
+#' @param ncores number of cores for parallel computing, default 1
+#'
+#' @importFrom stats quantile median
+#' @returns a list object that includes the denoised counts, denoised probability matrices,thresholds and optimal ranks
+#' @export
+dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
+                  increment=0.9, max_K=10, lambdas=c(0.01, 0.1, 1),
+                 ncores=1){
 
   prevalences <- colMeans(count_mat > 0)
 
@@ -10,7 +22,6 @@ ndbec <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
   unique_quantiles <- apply(count_mat, 2, quantile, probs=quantiles) |> as.vector() |>
     unique()
   unique_quantiles <- round(unique_quantiles) |> unique() |> sort()
-  # browser()
   # count the number of entries larger than all the candidate thresholds
   sum_series <- rep(0, length(unique_quantiles))
   for (i in 1:length(unique_quantiles)){
@@ -31,7 +42,7 @@ ndbec <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
   }
   selected_thresholds <- unique_quantiles[selected_order]
   print(sprintf("%d thresholds selected", length(selected_thresholds)))
-  # browser()
+
   # fit logisticCF to each binary slices
   prob_mats <- list()
   ranks <- rep(0, length(selected_thresholds))
@@ -55,23 +66,26 @@ ndbec <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
     if (any(row_sums == 0)){
       rows_retain <- which(row_sums > 0)
       mask <- mask[rows_retain, ]
-      observation <- observation[rows_retain, ]
+      observation <- observation[rows_retain, ,drop=FALSE]
     }
 
     col_sums <- colSums(mask)
     if (any(col_sums == 0)){
       cols_retain <- which(col_sums > 0)
       mask <- mask[, cols_retain]
-      observation <- observation[, cols_retain]
+      observation <- observation[, cols_retain, drop=FALSE]
     }
-
-
-    lcf_fit <- cv.logisticcfR(X=observation, Z=mask,
-                              max_K=max_K, lambdas=lambdas)
-
-
-    ranks[j+1] <- lcf_fit$selected_K
-    estimated_pi <- lcf_fit$pi
+    print(dim(observation))
+    if (nrow(observation) == 1 | ncol(observation) == 1){ # when the dimension of matrix reduce to 1, we can only take the mean
+      pi_scalar <- sum(observation) / sum(mask)
+      estimated_pi <- matrix(pi_scalar, nrow=nrow(observation), ncol=ncol(observation))
+    } else{
+      # logistic collaborative filtering for denoising binary matrices
+      lcf_fit <- cv.logisticcfR(X=observation, Z=mask,
+                                max_K=max_K, lambdas=lambdas, ncores=ncores)
+      ranks[j+1] <- lcf_fit$selected_K
+      estimated_pi <- lcf_fit$pi
+    }
 
     if (any(row_sums == 0) | any(col_sums == 0)){
       pi_mat[rows_retain, cols_retain] <- estimated_pi

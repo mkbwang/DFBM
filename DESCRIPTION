@@ -1,21 +1,27 @@
-Package: NDBEC
-Title: Nonparametric denoising and batch effect removal for single cell omics data
+Package: DFBM
+Title: Denoising metagenomics count matrices by factorizing binary masks
 Version: 0.0.0.9000
 Authors@R: 
     person("Mukai", "Wang", , "wangmk@umich.edu", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-1413-1904"))
-Description: Nonparametric denoising and batch effect removal for single cell omics data.
+Description: This is a nonparametric denoising method that applies to sequencing count matrices such as microbiome metagenomics and single cell sequencing. The novelty of this method is to dichitomize a count matrix into binary masks with a sequence of thresholds, then apply logistic collaborative filtering to estimate a probability matrix for each binary mask. These probabilities set up an empirical CDF for each entry. The expected count is then estimated based on the empirical distribution.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
 Imports:
-  Matrix,
-  Rcpp (>= 1.0.5),
-  RcppArmadillo (>= 14.0.0),
-  RcppParallel (>= 5.0.0),
-  pROC
-LinkingTo:
-  Rcpp,
-  RcppArmadillo,
-  RcppParallel
+  doParallel(>= 1.0.0),
+  foreach(>= 1.5.2),
+  parallel,
+  parallelly(>= 1.38.0),
+  stats
+Suggests:
+  rmarkdown (>= 2.11),
+  knitr (>= 1.37),
+  testthat (>= 3.0.0)
+Depends:
+  R (>= 4.1.0)
+Config/testthat/edition: 3
+LazyData: true
+LazyDataCompression: xz
+
