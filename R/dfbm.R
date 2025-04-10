@@ -5,6 +5,7 @@
 #' @param count_mat count matrix, nsamples * nfeatures
 #' @param quantiles the candidate thresholds are selected from the quantiles of each feature values
 #' @param increment a value between 0 and 1, at least certain percentage of entries larger than one threshold is smaller than the next threshold
+#' @param cutoffs if a vector of cutoffs are provided, then no need to derive thresholds
 #' @param max_K maximum number of ranks for binary matrix factorization
 #' @param lambdas ridge penalty parameters to try for the entries in the factorized matrices
 #' @param ncores number of cores for parallel computing, default 1
@@ -13,34 +14,40 @@
 #' @returns a list object that includes the denoised counts, denoised probability matrices,thresholds and optimal ranks
 #' @export
 dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
-                  increment=0.9, max_K=10, lambdas=c(0.01, 0.1, 1),
+                  increment=0.9, cutoffs=NULL, max_K=10, lambdas=c(0.01, 0.1, 1),
                  ncores=1){
 
   prevalences <- colMeans(count_mat > 0)
 
-  # select quantiles that are candidates for the thresholds
-  unique_quantiles <- apply(count_mat, 2, quantile, probs=quantiles) |> as.vector() |>
-    unique()
-  unique_quantiles <- round(unique_quantiles) |> unique() |> sort()
-  # count the number of entries larger than all the candidate thresholds
-  sum_series <- rep(0, length(unique_quantiles))
-  for (i in 1:length(unique_quantiles)){
-    sum_series[i] <- sum(count_mat > unique_quantiles[i])
+  if (is.null(cutoffs)){
+    # select quantiles that are candidates for the thresholds
+    unique_quantiles <- apply(count_mat, 2, quantile, probs=quantiles) |> as.vector() |>
+      unique()
+    unique_quantiles <- round(unique_quantiles) |> unique() |> sort()
+    # count the number of entries larger than all the candidate thresholds
+    sum_series <- rep(0, length(unique_quantiles))
+    for (i in 1:length(unique_quantiles)){
+      sum_series[i] <- sum(count_mat > unique_quantiles[i])
+    }
+
+    # select thresholds so that between adjacent thresholds, at least certain proportion of binary entries changed
+    selected_order <- c(1)
+    j <- 1
+    while (j < length(unique_quantiles)){
+      available_indices <- which(sum_series < sum_series[j] * increment)
+      if (length(available_indices) == 0){
+        break
+      }
+      next_j <- min(available_indices)
+      selected_order <- c(selected_order, next_j)
+      j <- next_j
+    }
+    selected_thresholds <- unique_quantiles[selected_order]
+  } else{
+    selected_thresholds <- cutoffs
   }
 
-  # select thresholds so that between adjacent thresholds, at least certain proportion of binary entries changed
-  selected_order <- c(1)
-  j <- 1
-  while (j < length(unique_quantiles)){
-    available_indices <- which(sum_series < sum_series[j] * increment)
-    if (length(available_indices) == 0){
-      break
-    }
-    next_j <- min(available_indices)
-    selected_order <- c(selected_order, next_j)
-    j <- next_j
-  }
-  selected_thresholds <- unique_quantiles[selected_order]
+
   print(sprintf("%d thresholds selected", length(selected_thresholds)))
 
   # fit logisticCF to each binary slices
