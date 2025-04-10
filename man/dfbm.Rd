@@ -8,6 +8,7 @@ dfbm(
   count_mat,
   quantiles = seq(0.1, 0.9, 0.1),
   increment = 0.9,
+  cutoffs = NULL,
   max_K = 10,
   lambdas = c(0.01, 0.1, 1),
   ncores = 1
@@ -19,6 +20,8 @@ dfbm(
 \item{quantiles}{the candidate thresholds are selected from the quantiles of each feature values}
 
 \item{increment}{a value between 0 and 1, at least certain percentage of entries larger than one threshold is smaller than the next threshold}
+
+\item{cutoffs}{if a vector of cutoffs are provided, then no need to derive thresholds}
 
 \item{max_K}{maximum number of ranks for binary matrix factorization}
 
