@@ -77,16 +77,13 @@ dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
     row_means <- rowMeans(mask)
     if (any(row_means <= ignore)){
       rows_retain <- which(row_means > ignore)
-      mask <- mask[rows_retain, ]
-      observation <- observation[rows_retain, ,drop=FALSE]
     }
-
     col_means <- colMeans(mask)
     if (any(col_means <= ignore)){
       cols_retain <- which(col_means > ignore)
-      mask <- mask[, cols_retain]
-      observation <- observation[, cols_retain, drop=FALSE]
     }
+    mask <- mask[rows_retain, cols_retain, drop=FALSE]
+    observation <- observation[rows_retain, cols_retain, drop=FALSE]
     print(dim(observation))
     if (nrow(observation) == 1 | ncol(observation) == 1){ # when the dimension of matrix reduce to 1, we can only take the mean
       pi_scalar <- sum(observation) / sum(mask)
