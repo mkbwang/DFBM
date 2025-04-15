@@ -9,7 +9,9 @@ dfbm(
   quantiles = seq(0.1, 0.9, 0.1),
   increment = 0.9,
   cutoffs = NULL,
+  fix_Ks = NULL,
   max_K = 10,
+  ignore = 0,
   lambdas = c(0.01, 0.1, 1),
   ncores = 1
 )
@@ -23,7 +25,11 @@ dfbm(
 
 \item{cutoffs}{if a vector of cutoffs are provided, then no need to derive thresholds}
 
+\item{fix_Ks}{the user can fix the rank number for all the binary masks}
+
 \item{max_K}{maximum number of ranks for binary matrix factorization}
+
+\item{ignore}{if less than a certain proportion of entries are "observed" for a row or column, that row or column is ignored for matrix factorization}
 
 \item{lambdas}{ridge penalty parameters to try for the entries in the factorized matrices}
 
