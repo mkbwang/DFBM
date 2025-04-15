@@ -6,6 +6,8 @@
 #' @param quantiles the candidate thresholds are selected from the quantiles of each feature values
 #' @param increment a value between 0 and 1, at least certain percentage of entries larger than one threshold is smaller than the next threshold
 #' @param cutoffs if a vector of cutoffs are provided, then no need to derive thresholds
+#' @param fix_Ks the user can fix the rank number for all the binary masks
+#' @param ignore if less than a certain proportion of entries are "observed" for a row or column, that row or column is ignored for matrix factorization
 #' @param max_K maximum number of ranks for binary matrix factorization
 #' @param lambdas ridge penalty parameters to try for the entries in the factorized matrices
 #' @param ncores number of cores for parallel computing, default 1
@@ -14,7 +16,7 @@
 #' @returns a list object that includes the denoised counts, denoised probability matrices,thresholds and optimal ranks
 #' @export
 dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
-                  increment=0.9, cutoffs=NULL, max_K=10, lambdas=c(0.01, 0.1, 1),
+                  increment=0.9, cutoffs=NULL, fix_Ks=NULL, max_K=10, ignore=0, lambdas=c(0.01, 0.1, 1),
                  ncores=1){
 
   prevalences <- colMeans(count_mat > 0)
@@ -47,6 +49,9 @@ dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
     selected_thresholds <- cutoffs
   }
 
+  if (!is.null(fix_Ks)){
+    stopifnot(length(fix_Ks) == length(selected_thresholds))
+  }
 
   print(sprintf("%d thresholds selected", length(selected_thresholds)))
 
@@ -69,16 +74,16 @@ dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
     ncols_retain <- seq(1, ncol(count_mat))
 
     # Do I need to subset rows and columns
-    row_sums <- rowSums(mask)
-    if (any(row_sums == 0)){
-      rows_retain <- which(row_sums > 0)
+    row_means <- rowMeans(mask)
+    if (any(row_means <= ignore)){
+      rows_retain <- which(row_means > ignore)
       mask <- mask[rows_retain, ]
       observation <- observation[rows_retain, ,drop=FALSE]
     }
 
-    col_sums <- colSums(mask)
-    if (any(col_sums == 0)){
-      cols_retain <- which(col_sums > 0)
+    col_means <- colMeans(mask)
+    if (any(col_means <= ignore)){
+      cols_retain <- which(col_means > ignore)
       mask <- mask[, cols_retain]
       observation <- observation[, cols_retain, drop=FALSE]
     }
@@ -88,13 +93,19 @@ dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
       estimated_pi <- matrix(pi_scalar, nrow=nrow(observation), ncol=ncol(observation))
     } else{
       # logistic collaborative filtering for denoising binary matrices
-      lcf_fit <- cv.logisticcfR(X=observation, Z=mask,
-                                max_K=max_K, lambdas=lambdas, ncores=ncores)
-      ranks[j+1] <- lcf_fit$selected_K
-      estimated_pi <- lcf_fit$pi
+      if (is.null(fix_Ks)){ # need to select rank
+        lcf_fit <- cv.logisticcfR(X=observation, Z=mask,
+                                  max_K=max_K, lambdas=lambdas, ncores=ncores)
+        ranks[j+1] <- lcf_fit$selected_K
+        estimated_pi <- lcf_fit$pi
+      } else{
+        lcf_fit <- logisticcfR(X=observation, Z=mask, K=fix_Ks[j+1], lambda=sample(lambdas, 1))
+        ranks[j+1] <- fix_Ks[j+1]
+        estimated_pi <- lcf_fit$pi
+      }
     }
 
-    if (any(row_sums == 0) | any(col_sums == 0)){
+    if (any(row_means <= ignore) | any(col_means <= ignore)){
       pi_mat[rows_retain, cols_retain] <- estimated_pi
     } else{
       pi_mat <- estimated_pi
