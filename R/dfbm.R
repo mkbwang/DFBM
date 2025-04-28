@@ -152,9 +152,10 @@ dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
 
     tail_values_mat <- (cap_vals_mat + prev_threshold) / 2
     estim_tail_mask <- sprob2 == 0 # whether probability of larger than the next threshold is zero
-    expected_counts[estim_tail_mask] <- expected_counts[estim_tail_mask] +
-      tail_values_mat[estim_tail_mask] * (sprob1[estim_tail_mask] - sprob2[estim_tail_mask])
-
+    if(any(estim_tail_mask)){ # some entries' probability drop to zero
+      expected_counts[estim_tail_mask] <- expected_counts[estim_tail_mask] +
+        tail_values_mat[estim_tail_mask] * (sprob1[estim_tail_mask] - sprob2[estim_tail_mask])
+    }
     if(!all(estim_tail_mask)){
       expected_counts[!estim_tail_mask] <- expected_counts[!estim_tail_mask] +
         interval_vals[j] * (sprob1[!estim_tail_mask] - sprob2[!estim_tail_mask])

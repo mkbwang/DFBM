@@ -10,7 +10,7 @@ thresholds <- c(0,4,8,12,16,20,25,31,38,45,52,
                 58,64,70,76,83,89,96,103,109,117,129,148)
 
 
-dfbm_denoise <- dfbm(counts_mat, cutoffs=thresholds, ignore=0.05,
+dfbm_denoise <- dfbm(counts_mat, cutoffs=thresholds, ignore=0,
                      fix_Ks=rep(3, length(thresholds)), ncores=4)
 
 denoised_counts <- dfbm_denoise$denoised_counts
