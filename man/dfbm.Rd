@@ -29,7 +29,7 @@ dfbm(
 
 \item{max_K}{maximum number of ranks for binary matrix factorization}
 
-\item{ignore}{if less than a certain proportion of entries are "observed" for a row or column, that row or column is ignored for matrix factorization}
+\item{ignore}{if less than a certain proportion of entries are "observed" for a  column, that column is ignored for matrix factorization}
 
 \item{lambdas}{ridge penalty parameters to try for the entries in the factorized matrices}
 
