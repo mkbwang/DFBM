@@ -11,8 +11,9 @@ dfbm(
   cutoffs = NULL,
   fix_Ks = NULL,
   max_K = 10,
-  ignore = 0,
   lambdas = c(0.01, 0.1, 1),
+  ignore = 0,
+  interpolate = TRUE,
   ncores = 1
 )
 }
@@ -29,9 +30,11 @@ dfbm(
 
 \item{max_K}{maximum number of ranks for binary matrix factorization}
 
+\item{lambdas}{ridge penalty parameters to try for the entries in the factorized matrices}
+
 \item{ignore}{if less than a certain proportion of entries are "observed" for a  column, that column is ignored for matrix factorization}
 
-\item{lambdas}{ridge penalty parameters to try for the entries in the factorized matrices}
+\item{interpolate}{if FALSE, then consider the probability of each entry larger than certain quantile of its column (decided by \code{ignore}) being zero}
 
 \item{ncores}{number of cores for parallel computing, default 1}
 }

@@ -7,16 +7,18 @@
 #' @param increment a value between 0 and 1, at least certain percentage of entries larger than one threshold is smaller than the next threshold
 #' @param cutoffs if a vector of cutoffs are provided, then no need to derive thresholds
 #' @param fix_Ks the user can fix the rank number for all the binary masks
-#' @param ignore if less than a certain proportion of entries are "observed" for a  column, that column is ignored for matrix factorization
 #' @param max_K maximum number of ranks for binary matrix factorization
 #' @param lambdas ridge penalty parameters to try for the entries in the factorized matrices
+#' @param ignore if less than a certain proportion of entries are "observed" for a  column, that column is ignored for matrix factorization
+#' @param interpolate if FALSE, then consider the probability of each entry larger than certain quantile of its column (decided by `ignore`) being zero
 #' @param ncores number of cores for parallel computing, default 1
 #'
 #' @importFrom stats quantile median
 #' @returns a list object that includes the denoised counts, denoised probability matrices,thresholds and optimal ranks
 #' @export
 dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
-                  increment=0.9, cutoffs=NULL, fix_Ks=NULL, max_K=10, ignore=0, lambdas=c(0.01, 0.1, 1),
+                  increment=0.9, cutoffs=NULL, fix_Ks=NULL, max_K=10, lambdas=c(0.01, 0.1, 1),
+                 ignore=0, interpolate=TRUE,
                  ncores=1){
 
   nsample <- nrow(count_mat)
@@ -150,17 +152,20 @@ dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
       sprob2 <- sprob1*prob_mats[[j+1]]
     }
 
-    tail_values_mat <- (cap_vals_mat + prev_threshold) / 2
-    estim_tail_mask <- sprob2 == 0 # whether probability of larger than the next threshold is zero
-    if(any(estim_tail_mask)){ # some entries' probability drop to zero
-      expected_counts[estim_tail_mask] <- expected_counts[estim_tail_mask] +
-        tail_values_mat[estim_tail_mask] * (sprob1[estim_tail_mask] - sprob2[estim_tail_mask])
+    if (interpolate){
+      tail_values_mat <- (cap_vals_mat + prev_threshold) / 2
+      estim_tail_mask <- sprob2 == 0 # whether probability of larger than the next threshold is zero
+      if(any(estim_tail_mask)){ # some entries' probability drop to zero
+        expected_counts[estim_tail_mask] <- expected_counts[estim_tail_mask] +
+          tail_values_mat[estim_tail_mask] * (sprob1[estim_tail_mask] - sprob2[estim_tail_mask])
+      }
+      if(!all(estim_tail_mask)){
+        expected_counts[!estim_tail_mask] <- expected_counts[!estim_tail_mask] +
+          interval_vals[j] * (sprob1[!estim_tail_mask] - sprob2[!estim_tail_mask])
+      }
+    } else{
+      expected_counts <- expected_counts + interval_vals[j] * (sprob1 - sprob2)
     }
-    if(!all(estim_tail_mask)){
-      expected_counts[!estim_tail_mask] <- expected_counts[!estim_tail_mask] +
-        interval_vals[j] * (sprob1[!estim_tail_mask] - sprob2[!estim_tail_mask])
-    }
-
   }
 
   return(list(thresholds=selected_thresholds,
