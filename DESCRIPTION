@@ -13,6 +13,7 @@ Imports:
   doParallel(>= 1.0.0),
   foreach(>= 1.5.2),
   parallel,
+  dplyr(>= 1.1.4),
   parallelly(>= 1.38.0),
   stats
 Suggests:
