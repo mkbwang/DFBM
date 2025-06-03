@@ -30,8 +30,7 @@ dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
   if (is.null(cutoffs)){
     # select quantiles that are candidates for the thresholds
     unique_quantiles <- apply(count_mat, 2, quantile, probs=quantiles) |> as.vector() |>
-      unique()
-    unique_quantiles <- round(unique_quantiles) |> unique() |> sort()
+      unique() |> sort()
     # count the number of entries larger than all the candidate thresholds
     sum_series <- rep(0, length(unique_quantiles))
     for (i in 1:length(unique_quantiles)){
