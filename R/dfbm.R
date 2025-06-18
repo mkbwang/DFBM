@@ -10,6 +10,7 @@
 #' @param max_K maximum number of ranks for binary matrix factorization
 #' @param lambdas ridge penalty parameters to try for the entries in the factorized matrices
 #' @param ignore if less than a certain proportion of entries are "observed" for a  column, that column is ignored for matrix factorization
+#' @param cap only denoise entries whose values are smaller than this value, by default the 99% quantile of the values
 #' @param interpolate if FALSE, then consider the probability of each entry larger than certain quantile of its column (decided by `ignore`) being zero
 #' @param ncores number of cores for parallel computing, default 1
 #'
@@ -18,12 +19,15 @@
 #' @export
 dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
                   increment=0.9, cutoffs=NULL, fix_Ks=NULL, max_K=10, lambdas=c(0.01, 0.1, 1),
-                 ignore=0, interpolate=TRUE,
+                 ignore=0, cap=NULL, interpolate=TRUE,
                  ncores=1){
 
   nsample <- nrow(count_mat)
   nfeature <- ncol(count_mat)
-  maximum_threshold <- max(apply(count_mat, 2, quantile, probs=1-ignore))
+  maximum_threshold <- quantile(as.vector(count_mat), 0.99)
+  if (!is.null(cap)){
+    maximum_threshold <- cap
+  }
 
   prevalences <- colMeans(count_mat > 0)
 
@@ -132,7 +136,8 @@ dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
 
   # for the values larger than the largest threshold, I take median
   upper_bound <- selected_thresholds[length(selected_thresholds)]
-  interval_vals[length(selected_thresholds)] <- median(count_mat[count_mat > upper_bound])
+  interval_vals[length(selected_thresholds)] <- mean(count_mat[count_mat > upper_bound &
+                                                                 count_mat < maximum_threshold])
 
   # calculate expected counts
   expected_counts <- matrix(0, nrow=nrow(count_mat), ncol=ncol(count_mat))
@@ -166,6 +171,9 @@ dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
       expected_counts <- expected_counts + interval_vals[j] * (sprob1 - sprob2)
     }
   }
+
+  # do not change entries with large values
+  expected_counts[count_mat > maximum_threshold] <- count_mat[count_mat > maximum_threshold]
 
   return(list(thresholds=selected_thresholds,
               optimal_ranks = ranks,
