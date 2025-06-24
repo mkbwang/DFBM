@@ -13,7 +13,7 @@ dfbm(
   max_K = 10,
   lambdas = c(0.01, 0.1, 1),
   ignore = 0,
-  cap = NULL,
+  cap = Inf,
   interpolate = TRUE,
   ncores = 1
 )
@@ -35,7 +35,7 @@ dfbm(
 
 \item{ignore}{if less than a certain proportion of entries are "observed" for a  column, that column is ignored for matrix factorization}
 
-\item{cap}{only denoise entries whose values are smaller than this value, by default the 99\% quantile of the values}
+\item{cap}{only denoise entries whose values are smaller than this value, by default infinity (all the entries have their values changed)}
 
 \item{interpolate}{if FALSE, then consider the probability of each entry larger than certain quantile of its column (decided by \code{ignore}) being zero}
 

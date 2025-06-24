@@ -10,7 +10,7 @@
 #' @param max_K maximum number of ranks for binary matrix factorization
 #' @param lambdas ridge penalty parameters to try for the entries in the factorized matrices
 #' @param ignore if less than a certain proportion of entries are "observed" for a  column, that column is ignored for matrix factorization
-#' @param cap only denoise entries whose values are smaller than this value, by default the 99% quantile of the values
+#' @param cap only denoise entries whose values are smaller than this value, by default infinity (all the entries have their values changed)
 #' @param interpolate if FALSE, then consider the probability of each entry larger than certain quantile of its column (decided by `ignore`) being zero
 #' @param ncores number of cores for parallel computing, default 1
 #'
@@ -19,7 +19,7 @@
 #' @export
 dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
                   increment=0.9, cutoffs=NULL, fix_Ks=NULL, max_K=10, lambdas=c(0.01, 0.1, 1),
-                 ignore=0, cap=NULL, interpolate=TRUE,
+                 ignore=0, cap=Inf, interpolate=TRUE,
                  ncores=1){
 
   nsample <- nrow(count_mat)
