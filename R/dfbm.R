@@ -9,9 +9,8 @@
 #' @param fix_Ks the user can fix the rank number for all the binary masks
 #' @param max_K maximum number of ranks for binary matrix factorization
 #' @param lambdas ridge penalty parameters to try for the entries in the factorized matrices
-#' @param ignore if less than a certain proportion of entries are "observed" for a  column, that column is ignored for matrix factorization
-#' @param cap only denoise entries whose values are smaller than this value, by default infinity (all the entries have their values changed)
-#' @param interpolate if FALSE, then consider the probability of each entry larger than certain quantile of its column (decided by `ignore`) being zero
+#' @param ignore if less than a certain proportion of entries are "observed" for a column, that column is ignored for matrix factorization
+#' @param cap only denoise entries whose values are smaller than this value, by default 99% quantile of all entries if NA provided
 #' @param ncores number of cores for parallel computing, default 1
 #'
 #' @importFrom stats quantile median
@@ -19,7 +18,7 @@
 #' @export
 dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
                   increment=0.9, cutoffs=NULL, fix_Ks=NULL, max_K=10, lambdas=c(0.01, 0.1, 1),
-                 ignore=0, cap=Inf, interpolate=TRUE,
+                 ignore=0, cap=NA,
                  ncores=1){
 
   nsample <- nrow(count_mat)
@@ -134,10 +133,10 @@ dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
                                       count_mat <= upper_bound])
   }
 
-  # for the values larger than the largest threshold, I take median
+
   upper_bound <- selected_thresholds[length(selected_thresholds)]
   interval_vals[length(selected_thresholds)] <- mean(count_mat[count_mat > upper_bound &
-                                                                 count_mat < maximum_threshold])
+                                                                 count_mat <= maximum_threshold])
 
   # calculate expected counts
   expected_counts <- matrix(0, nrow=nrow(count_mat), ncol=ncol(count_mat))
@@ -156,20 +155,20 @@ dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
       sprob2 <- sprob1*prob_mats[[j+1]]
     }
 
-    if (interpolate){
-      tail_values_mat <- (cap_vals_mat + prev_threshold) / 2
-      estim_tail_mask <- sprob2 == 0 # whether probability of larger than the next threshold is zero
-      if(any(estim_tail_mask)){ # some entries' probability drop to zero
-        expected_counts[estim_tail_mask] <- expected_counts[estim_tail_mask] +
-          tail_values_mat[estim_tail_mask] * (sprob1[estim_tail_mask] - sprob2[estim_tail_mask])
-      }
-      if(!all(estim_tail_mask)){
-        expected_counts[!estim_tail_mask] <- expected_counts[!estim_tail_mask] +
-          interval_vals[j] * (sprob1[!estim_tail_mask] - sprob2[!estim_tail_mask])
-      }
-    } else{
-      expected_counts <- expected_counts + interval_vals[j] * (sprob1 - sprob2)
-    }
+    # if (interpolate){
+    #   tail_values_mat <- (cap_vals_mat + prev_threshold) / 2
+    #   estim_tail_mask <- sprob2 == 0 # whether probability of larger than the next threshold is zero
+    #   if(any(estim_tail_mask)){ # some entries' probability drop to zero
+    #     expected_counts[estim_tail_mask] <- expected_counts[estim_tail_mask] +
+    #       tail_values_mat[estim_tail_mask] * (sprob1[estim_tail_mask] - sprob2[estim_tail_mask])
+    #   }
+    #   if(!all(estim_tail_mask)){
+    #     expected_counts[!estim_tail_mask] <- expected_counts[!estim_tail_mask] +
+    #       interval_vals[j] * (sprob1[!estim_tail_mask] - sprob2[!estim_tail_mask])
+    #   }
+    # } else{
+    expected_counts <- expected_counts + interval_vals[j] * (sprob1 - sprob2)
+    # }
   }
 
   # do not change entries with large values
