@@ -2,13 +2,18 @@
 
 #' Denoise count matrices by factorization of binary masks
 #'
+#' This is the main function. It takes in a count matrix (count_mat) with samples on rows and features on columns.
+#' The count matrix is dichotomized into a sequence of binary matrices based on a series of cutoff values. The user can fix the full vector of cutoff values (cutoff).
+#' The user can also inform the program one value (decrement) that indicates the proportion of entries that changes from one to zero between adjacent thresholds, and the program will automatically choose the thresholds.
+#' Matrix factorization is applied to each binary matrix to translate into probabilities of each entry being larger than the corresponding threshold.
+#' Each entry's denoised value is estimated based on the empirical distribution formed by the estimated probability larger than each cutoff.
+#'
 #' @param count_mat count matrix, nsamples * nfeatures
-#' @param quantiles the candidate thresholds are selected from the quantiles of each feature values
-#' @param increment a value between 0 and 1, at least certain percentage of entries larger than one threshold is smaller than the next threshold
+#' @param decrement a value between 0 and 1, at least certain percentage of entries larger than one threshold is smaller than the next threshold
 #' @param cutoffs if a vector of cutoffs are provided, then no need to derive thresholds
-#' @param fix_Ks the user can fix the rank number for all the binary masks
+#' @param fix_K the user can fix the rank number for all the binary masks
 #' @param max_K maximum number of ranks for binary matrix factorization
-#' @param lambdas ridge penalty parameters to try for the entries in the factorized matrices
+#' @param lambdas ridge penalty parameters to try for matrix factorization
 #' @param ignore if less than a certain proportion of entries are "observed" for a column, that column is ignored for matrix factorization
 #' @param cap only denoise entries whose values are smaller than this value, by default 99% quantile of all entries if NA provided
 #' @param ncores number of cores for parallel computing, default 1
@@ -16,9 +21,8 @@
 #' @importFrom stats quantile median
 #' @returns a list object that includes the denoised counts, denoised probability matrices,thresholds and optimal ranks
 #' @export
-dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
-                  increment=0.9, cutoffs=NULL, fix_Ks=NULL, max_K=10, lambdas=c(0.01, 0.1, 1),
-                 ignore=0, cap=NA,
+dfbm <- function(count_mat, decrement=0.1, cutoffs=NULL, fix_K=NULL,
+                 max_K=10, lambdas=c(0.01, 0.1, 1), ignore=0, cap=NULL,
                  ncores=1){
 
   nsample <- nrow(count_mat)
@@ -26,14 +30,16 @@ dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
   maximum_threshold <- quantile(as.vector(count_mat), 0.99)
   if (!is.null(cap)){
     maximum_threshold <- cap
+  } else{
+    maximum_threshold <- quantile(count_mat, 0.99)
   }
 
   prevalences <- colMeans(count_mat > 0)
 
-  if (is.null(cutoffs)){
-    # select quantiles that are candidates for the thresholds
-    unique_quantiles <- apply(count_mat, 2, quantile, probs=quantiles) |> as.vector() |>
-      unique() |> sort()
+  if (is.null(cutoffs)){ # let the program decide cutoffs automatically
+    # set up a pool of values that could be thresholds
+    unique_quantiles <- apply(count_mat, 2, quantile, probs=seq(0.1, 0.9, 0.1)) |> as.vector() |>
+      unique() |> sort() # tenth quantiles from each feature
     # count the number of entries larger than all the candidate thresholds
     sum_series <- rep(0, length(unique_quantiles))
     for (i in 1:length(unique_quantiles)){
@@ -44,7 +50,7 @@ dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
     selected_order <- c(1)
     j <- 1
     while (j < length(unique_quantiles)){
-      available_indices <- which(sum_series < sum_series[j] * increment)
+      available_indices <- which(sum_series < sum_series[j] * (1-decrement))
       if (length(available_indices) == 0){
         break
       }
@@ -59,9 +65,6 @@ dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
   # remove automatically decided thresholds that were larger than the maximum value
   selected_thresholds <- selected_thresholds[selected_thresholds <= maximum_threshold]
 
-  if (!is.null(fix_Ks)){
-    fix_Ks <- fix_Ks[1:length(selected_thresholds)]
-  }
 
   print(sprintf("%d thresholds selected", length(selected_thresholds)))
 
@@ -101,14 +104,14 @@ dfbm <- function(count_mat, quantiles=seq(0.1, 0.9, 0.1),
       estimated_pi <- matrix(pi_scalar, nrow=nrow(observation), ncol=ncol(observation))
     } else{
       # logistic collaborative filtering for denoising binary matrices
-      if (is.null(fix_Ks)){ # need to select rank
+      if (is.null(fix_K)){ # need to select rank
         lcf_fit <- cv.logisticcfR(X=observation, Z=mask,
                                   max_K=max_K, lambdas=lambdas, ncores=ncores)
         ranks[j+1] <- lcf_fit$selected_K
         estimated_pi <- lcf_fit$pi
       } else{
-        lcf_fit <- logisticcfR(X=observation, Z=mask, K=fix_Ks[j+1], lambda=sample(lambdas, 1))
-        ranks[j+1] <- fix_Ks[j+1]
+        lcf_fit <- logisticcfR(X=observation, Z=mask, K=fix_K, lambda=sample(lambdas, 1))
+        ranks[j+1] <- fix_K
         estimated_pi <- lcf_fit$pi
       }
     }

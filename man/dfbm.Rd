@@ -6,31 +6,28 @@
 \usage{
 dfbm(
   count_mat,
-  quantiles = seq(0.1, 0.9, 0.1),
-  increment = 0.9,
+  decrement = 0.1,
   cutoffs = NULL,
-  fix_Ks = NULL,
+  fix_K = NULL,
   max_K = 10,
   lambdas = c(0.01, 0.1, 1),
   ignore = 0,
-  cap = NA,
+  cap = NULL,
   ncores = 1
 )
 }
 \arguments{
 \item{count_mat}{count matrix, nsamples * nfeatures}
 
-\item{quantiles}{the candidate thresholds are selected from the quantiles of each feature values}
-
-\item{increment}{a value between 0 and 1, at least certain percentage of entries larger than one threshold is smaller than the next threshold}
+\item{decrement}{a value between 0 and 1, at least certain percentage of entries larger than one threshold is smaller than the next threshold}
 
 \item{cutoffs}{if a vector of cutoffs are provided, then no need to derive thresholds}
 
-\item{fix_Ks}{the user can fix the rank number for all the binary masks}
+\item{fix_K}{the user can fix the rank number for all the binary masks}
 
 \item{max_K}{maximum number of ranks for binary matrix factorization}
 
-\item{lambdas}{ridge penalty parameters to try for the entries in the factorized matrices}
+\item{lambdas}{ridge penalty parameters to try for matrix factorization}
 
 \item{ignore}{if less than a certain proportion of entries are "observed" for a column, that column is ignored for matrix factorization}
 
@@ -42,5 +39,9 @@ dfbm(
 a list object that includes the denoised counts, denoised probability matrices,thresholds and optimal ranks
 }
 \description{
-Denoise count matrices by factorization of binary masks
+This is the main function. It takes in a count matrix (count_mat) with samples on rows and features on columns.
+The count matrix is dichotomized into a sequence of binary matrices based on a series of cutoff values. The user can fix the full vector of cutoff values (cutoff).
+The user can also inform the program one value (decrement) that indicates the proportion of entries that changes from one to zero between adjacent thresholds, and the program will automatically choose the thresholds.
+Matrix factorization is applied to each binary matrix to translate into probabilities of each entry being larger than the corresponding threshold.
+Each entry's denoised value is estimated based on the empirical distribution formed by the estimated probability larger than each cutoff.
 }
