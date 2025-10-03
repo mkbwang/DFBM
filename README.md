@@ -1,2 +1,4 @@
-# Sign-Series
-Nonparametric method to denoise sequencing count matrix
+# Nonparametric Denoising
+
+Denoising microbiome metagenomics data by factorizing binary matrices.
+
