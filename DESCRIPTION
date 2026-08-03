@@ -15,6 +15,7 @@ Imports:
   parallel,
   dplyr(>= 1.1.4),
   parallelly(>= 1.38.0),
+  RSpectra(>= 0.16.0),
   stats
 Suggests:
   rmarkdown (>= 2.11),

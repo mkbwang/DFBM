@@ -95,6 +95,115 @@ logistic_ce <- function(X, Y, Omega = NULL) {
 }
 
 
+#' Per-entry loss of a fitted mask stack, summed over thresholds
+#'
+#' @param X list of T natural parameter matrices
+#' @param Y list of T binary matrices
+#' @param idx integer positions of the entries to score, in column major order,
+#'   or NULL to score every entry
+#' @param loss `"brier"` for squared error on the probability scale, `"ce"` for
+#'   cross entropy
+#' @returns a numeric vector, one element per scored entry
+#' @details
+#' Hot kernel. One pass per mask with no allocation beyond the accumulator.
+#'
+#' The sum over \eqn{t} is taken *inside*, so the unit of observation of the
+#' returned vector is the entry \eqn{(i,j)} rather than the pair
+#' \eqn{(\text{entry}, t)}. That is what makes a standard error over the result
+#' honest: the masks are nested and generated from a single latent value per
+#' entry, so the T terms belonging to one entry are strongly dependent and
+#' treating them as T independent observations understates the spread by roughly
+#' \eqn{\sqrt{T}}.
+#' @keywords internal
+entry_loss <- function(X, Y, idx = NULL, loss = c("brier", "ce")) {
+  loss <- match.arg(loss)
+  n <- if (is.null(idx)) length(X[[1L]]) else length(idx)
+  out <- numeric(n)
+  for (t in seq_along(X)) {
+    x <- if (is.null(idx)) as.vector(X[[t]]) else X[[t]][idx]
+    y <- if (is.null(idx)) as.vector(Y[[t]]) else Y[[t]][idx]
+    out <- out + if (loss == "brier") {
+      (stats::plogis(x) - y)^2
+    } else {
+      log1exp(x) - y * x
+    }
+  }
+  out
+}
+
+
+#' Degrees of freedom of a soft thresholded singular value decomposition
+#'
+#' @param dvals list of T numeric vectors holding the retained singular values
+#'   of each block *after* shrinkage, as returned by [soft_svt()]
+#' @param thresh numeric vector of T thresholds **as actually applied by the
+#'   proximal step**, that is \eqn{\lambda_t / L_t} and not \eqn{\lambda_t}
+#' @param N,P matrix dimensions
+#' @param weighted whether to weight each retained component by how little it
+#'   was shrunk. `FALSE` reproduces the hard count \eqn{r_t(N+P-r_t)} of the
+#'   method note and ignores `thresh`.
+#' @returns a numeric vector of length T
+#' @details
+#' \eqn{\mathrm{df}_t = \sum_i s_i (N + P - 2i + 1)}, where
+#' \eqn{(N+P-2i+1)} is the free parameter count of the i-th singular triplet, so
+#' that \eqn{\sum_{i \le r}(N+P-2i+1) = r(N+P-r)} recovers the hard count
+#' exactly when nothing is discounted.
+#'
+#' The hard count treats every retained singular value as a whole free
+#' parameter. Soft thresholding shrinks what it retains, so the effective number
+#' is smaller by \eqn{s_i = d_i/(d_i + \tau_t)}, with \eqn{d_i} the *shrunken*
+#' value stored in `dvals` and \eqn{d_i + \tau_t} the value before thresholding.
+#'
+#' **`dvals` are the singular values before clipping, which is what this wants.**
+#' Clipping is an elementwise \eqn{\min(\cdot, c)}, so its derivative with
+#' respect to the data is 1 on untouched entries and 0 on capped ones: it can
+#' only lower the sensitivity of the fit to `Y`, hence lower the degrees of
+#' freedom. It also destroys low-rankness -- capping a rank 13 block was
+#' measured to leave a matrix of rank 43 -- so feeding the clipped spectrum in
+#' would count artifacts of the cap as free parameters and push `df` the wrong
+#' way (3225 to 3340 on one fit). The exact adjustment is to scale by the
+#' unclipped fraction, which was 0.9965 there and is not worth taking.
+#'
+#' **`thresh` must be \eqn{\lambda_t/L_t}.** That is what
+#' `soft_svt(W - \Psi/L, thresh = lambda/L)` actually subtracts, so it is what
+#' has to be added back to recover the original singular value. Passing
+#' \eqn{\lambda_t} instead understates `df` -- the two differ by the Lipschitz
+#' constant, measured around 2.7x on one block -- which weakens the Cp penalty
+#' and biases selection toward too little shrinkage. Over 8 cells the correct
+#' threshold gave a mean distance of 0.75 grid steps from the best available
+#' alpha against 0.875, and RMSE 0.1505 against 0.1549. Both are still biased,
+#' in opposite directions (-0.50 and +0.625 signed), which says the divergence
+#' of an iterative estimator is not fully captured by the proximal step alone.
+#' @keywords internal
+svt_df <- function(dvals, thresh, N, P, weighted = TRUE) {
+  vapply(seq_along(dvals), function(t) {
+    d <- dvals[[t]]
+    r <- length(d)
+    if (r == 0L) return(0)
+    if (!weighted) return(r * (N + P - r))
+    s <- d / (d + thresh[t])
+    sum(s * (N + P - 2 * seq_len(r) + 1))
+  }, numeric(1L))
+}
+
+
+#' Mean Bernoulli variance of a fitted probability stack
+#'
+#' @param prob list of T probability matrices
+#' @returns a single number, \eqn{\frac{1}{|\Omega|T}\sum \hat\pi(1-\hat\pi)}
+#' @details
+#' Named rather than inlined because the Mallows Cp surrogate is only correct
+#' when this is evaluated once at a *fixed* reference fit and held constant
+#' across the shrinkage grid. Re-estimating it from each candidate fit makes the
+#' penalty vanish exactly where it is needed: as the shrinkage weakens the fit
+#' drives the probabilities toward 0 and 1, so this quantity collapses (0.209 to
+#' 0.019 across one K = 10 grid) while the degrees of freedom explode.
+#' @keywords internal
+mean_bernoulli_var <- function(prob) {
+  mean(vapply(prob, function(m) mean(m * (1 - m)), numeric(1L)))
+}
+
+
 #' Accumulate the natural parameter stack from the increments
 #'
 #' @param Z list of T increment matrices
