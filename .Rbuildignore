@@ -5,3 +5,5 @@ python_archive/
 ^LICENSE\.md$
 R_archived/
 src_archived/
+references/
+^CLAUDE\.md$

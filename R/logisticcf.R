@@ -1,17 +1,4 @@
 
-#' log one plus exponential
-#'
-#' @param x a vector
-#' @returns log(1+exp(x))
-#' @details
-#' This function is used to avoid numerical issues when x is too large
-#' @export
-log1exp <- function(x){
-  output <- x
-  output[x<20] <- log(1+exp(x[x<20]))
-  return(output)
-}
-
 
 #' Cross entropy loss plus ridge penalty
 #'
