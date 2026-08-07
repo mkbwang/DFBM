@@ -1,5 +1,5 @@
 Package: DFBM
-Title: Denoising metagenomics count matrices by factorizing binary masks
+Title: Denoising omics count matrices by factorizing binary masks
 Version: 0.0.0.9000
 Authors@R: 
     person("Mukai", "Wang", , "wangmk@umich.edu", role = c("aut", "cre"),

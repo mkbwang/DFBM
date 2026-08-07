@@ -6,9 +6,9 @@
 \usage{
 bmfsvt(
   Y,
-  Omega = NULL,
   lambda = NULL,
-  alpha = 0.1,
+  alpha = 0.55,
+  C = 20L,
   max_iter = 200L,
   tol = 1e-05,
   gamma = 1.1,
@@ -33,13 +33,22 @@ nested and decreasing, i.e. \eqn{Y^{(0)}_{ij} \ge Y^{(1)}_{ij} \ge \cdots},
 which holds automatically when they come from thresholding one abundance
 matrix with an increasing threshold sequence.}
 
-\item{Omega}{an N x P binary matrix marking observed entries, shared by every
-mask. \code{NULL} means all entries are observed.}
-
 \item{lambda}{shrinkage parameter for each mask; a scalar is recycled. When
-\code{NULL} the value \code{alpha * lambda_max_seq(Y, Omega)} is used.}
+\code{NULL} the value \code{alpha * lambda_star_seq(Y, C)} is used.}
 
-\item{alpha}{shrinkage relative to the largest useful value, used only when
+\item{alpha}{shrinkage relative to the \strong{noise floor} \code{\link[=lambda_star_seq]{lambda_star_seq()}},
+used only when \code{lambda} is \code{NULL}. Section 2.2 of the method note puts the
+search range at \eqn{\alpha \in (0, 1]}, with \code{alpha = 1} thresholding
+exactly at the floor.
+
+\strong{This changed meaning.} It was formerly a multiplier on
+\code{\link[=lambda_max_seq]{lambda_max_seq()}}, where the useful values sat near 0.3-0.6; it is now a
+multiplier on \code{\link[=lambda_star_seq]{lambda_star_seq()}}, where the measured optimum is about
+\strong{0.55} (argmin in 6 of 6 pilot cells, two shapes x three seeds). A value
+carried over from the old parameterization will be wrong, not merely
+suboptimal.}
+
+\item{C}{pure noise replicates used by \code{\link[=lambda_star_seq]{lambda_star_seq()}}, used only when
 \code{lambda} is \code{NULL}.}
 
 \item{max_iter}{maximum number of outer FISTA iterations.}
@@ -130,6 +139,6 @@ informing the fit does not shrink as thresholds grow.
 A single mask (\code{T = 1}) reduces this to Algorithm 1.
 }
 \seealso{
-\code{\link[=cv.bmfsvt]{cv.bmfsvt()}} for choosing \code{alpha}, \code{\link[=lambda_max_seq]{lambda_max_seq()}} for the
+\code{\link[=tune.bmfsvt]{tune.bmfsvt()}} for choosing \code{alpha}, \code{\link[=lambda_star_seq]{lambda_star_seq()}} for the
 shrinkage scale.
 }

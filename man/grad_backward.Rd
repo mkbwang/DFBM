@@ -4,17 +4,15 @@
 \alias{grad_backward}
 \title{Reverse cumulative gradient of the stacked cross entropy}
 \usage{
-grad_backward(X, Y, Omega = NULL)
+grad_backward(X, Y)
 }
 \arguments{
 \item{X}{list of T natural parameter matrices}
 
 \item{Y}{list of T binary matrices}
-
-\item{Omega}{binary matrix of observed entries, or NULL when all are observed}
 }
 \value{
-list of T matrices \eqn{\Psi_t = \sum_{t' \ge t} P_\Omega(\sigma(X^{(t')}) - Y^{(t')})}
+list of T matrices \eqn{\Psi_t = \sum_{t' \ge t} (\sigma(X^{(t')}) - Y^{(t')})}
 }
 \description{
 Reverse cumulative gradient of the stacked cross entropy

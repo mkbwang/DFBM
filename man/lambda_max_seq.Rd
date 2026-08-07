@@ -4,12 +4,10 @@
 \alias{lambda_max_seq}
 \title{Largest useful shrinkage parameter for each binary mask}
 \usage{
-lambda_max_seq(Y, Omega = NULL)
+lambda_max_seq(Y)
 }
 \arguments{
 \item{Y}{list of T binary matrices, or an N x P x T array}
-
-\item{Omega}{binary matrix of observed entries, or NULL when all are observed}
 }
 \value{
 a numeric vector of length T
@@ -18,7 +16,15 @@ a numeric vector of length T
 Largest useful shrinkage parameter for each binary mask
 }
 \details{
-\eqn{\lambda_t^{max} = \| \sum_{t' \ge t} P_\Omega(\pi_{t'} - Y^{(t')}) \|_2}
+\eqn{\lambda_t^{max} = \| \sum_{t' \ge t} (\pi_{t'} - Y^{(t')}) \|_2}
 is the spectral norm of the gradient at \eqn{Z = 0}, hence the smallest
 shrinkage for which the estimate collapses to \eqn{\hat Z^{(t)} = 0}.
+
+\strong{This no longer sets the search range.} It bounds the grid from above but
+the whole interval \eqn{[\lambda^*_t, \lambda^{max}_t]} lies on the
+over-shrinking side, so \code{\link[=lambda_star_seq]{lambda_star_seq()}} is the anchor; see there. This is
+kept because \code{\link[=violation_diagnostics]{violation_diagnostics()}} and the reports still use it.
+}
+\seealso{
+\code{\link[=lambda_star_seq]{lambda_star_seq()}}, which does set the range
 }

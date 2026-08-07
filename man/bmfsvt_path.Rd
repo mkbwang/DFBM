@@ -4,23 +4,27 @@
 \alias{bmfsvt_path}
 \title{Fit a whole shrinkage path with warm starts}
 \usage{
-bmfsvt_path(Y, Omega = NULL, alpha_grid, ...)
+bmfsvt_path(Y, alpha_grid, C = 20L, seed = NULL, ...)
 }
 \arguments{
 \item{Y}{a list of T binary matrices, or an N x P x T array}
 
-\item{Omega}{an N x P binary matrix of observed entries, or \code{NULL}}
-
-\item{alpha_grid}{shrinkage levels relative to \code{\link[=lambda_max_seq]{lambda_max_seq()}}; sorted
+\item{alpha_grid}{shrinkage levels relative to \code{\link[=lambda_star_seq]{lambda_star_seq()}}; sorted
 decreasing internally so that each fit warm starts the next}
+
+\item{C}{pure noise replicates for \code{\link[=lambda_star_seq]{lambda_star_seq()}}}
+
+\item{seed}{optional integer making the \code{\link[=lambda_star_seq]{lambda_star_seq()}} draw reproducible}
 
 \item{...}{further arguments passed to \code{\link[=bmfsvt]{bmfsvt()}}}
 }
 \value{
 a list holding the grid, the per-alpha increment matrices \code{Z}, the
 shared offsets \code{mu} and \code{nu}, and one row of diagnostics per alpha:
-\code{brier} (summed over the observed entries and every mask), \code{v_tilde},
-\code{df} and \code{df_hard}, \code{ranks}, \code{n_iter}, \code{n_svd}, \code{converged}, \code{elapsed}.
+\code{brier} (summed over every entry and every mask), \code{v_tilde}, \code{df} and
+\code{df_hard} (each a K x T \strong{matrix}, per slice), \code{ranks}, \code{n_iter}, \code{n_svd},
+\code{converged}, \code{elapsed}. \code{v_t} holds the per-slice surrogate variance
+\eqn{\pi_t(1-\pi_t)}, which depends on the data alone and not on any fit.
 }
 \description{
 Fit a whole shrinkage path with warm starts
@@ -33,7 +37,14 @@ Only \code{Z} is retained per alpha, not the full fit: \code{mu} and \code{nu} d
 mask prevalences alone and so are shared by the whole path, which makes
 \code{sigma(stack_forward(Z, mu, nu))} enough to recover any fitted probability on
 demand. That is three stored matrices per alpha rather than nine. It also
-removes the need for a refit once an alpha is chosen: the path was fit on all
-of \code{Omega} to begin with, so the selected fit is already in hand.
+removes the need for a refit once an alpha is chosen: the path was fit on
+every entry to begin with, so the selected fit is already in hand.
+
+\code{lambda_star_seq()} is evaluated \strong{once} here, not once per candidate: the
+whole grid rescales the same vector, and the Monte Carlo cost is \code{C} partial
+decompositions per threshold.
+
+\code{df} is kept per slice rather than summed because the Cp penalty of section
+2.3 weights each slice by its own \eqn{\tilde V_t}; see \code{\link[=cp_surrogate]{cp_surrogate()}}.
 }
 \keyword{internal}

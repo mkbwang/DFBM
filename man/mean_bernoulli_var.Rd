@@ -10,7 +10,7 @@ mean_bernoulli_var(prob)
 \item{prob}{list of T probability matrices}
 }
 \value{
-a single number, \eqn{\frac{1}{|\Omega|T}\sum \hat\pi(1-\hat\pi)}
+a single number, \eqn{\frac{1}{NPT}\sum \hat\pi(1-\hat\pi)}
 }
 \description{
 Mean Bernoulli variance of a fitted probability stack

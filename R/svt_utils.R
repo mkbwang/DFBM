@@ -83,27 +83,21 @@ as_mask_list <- function(Y, check_nested = TRUE) {
 #'
 #' @param X real valued matrix of natural parameters
 #' @param Y binary matrix
-#' @param Omega binary matrix of observed entries, or NULL when all are observed
-#' @returns the summed negative log likelihood over the observed entries
+#' @returns the summed negative log likelihood
 #' @details
 #' Hot kernel. Written as \eqn{-YX + \log(1+e^X)} so that [log1exp()] handles the
 #' large-\eqn{X} branch; evaluating \code{log(sigmoid(X))} directly underflows.
 #' @keywords internal
-logistic_ce <- function(X, Y, Omega = NULL) {
-  val <- log1exp(X) - Y * X
-  if (is.null(Omega)) sum(val) else sum(Omega * val)
+logistic_ce <- function(X, Y) {
+  sum(log1exp(X) - Y * X)
 }
 
 
-#' Per-entry loss of a fitted mask stack, summed over thresholds
+#' Per-entry Brier loss of a fitted mask stack, summed over thresholds
 #'
 #' @param X list of T natural parameter matrices
 #' @param Y list of T binary matrices
-#' @param idx integer positions of the entries to score, in column major order,
-#'   or NULL to score every entry
-#' @param loss `"brier"` for squared error on the probability scale, `"ce"` for
-#'   cross entropy
-#' @returns a numeric vector, one element per scored entry
+#' @returns a numeric vector, one element per entry
 #' @details
 #' Hot kernel. One pass per mask with no allocation beyond the accumulator.
 #'
@@ -115,18 +109,10 @@ logistic_ce <- function(X, Y, Omega = NULL) {
 #' treating them as T independent observations understates the spread by roughly
 #' \eqn{\sqrt{T}}.
 #' @keywords internal
-entry_loss <- function(X, Y, idx = NULL, loss = c("brier", "ce")) {
-  loss <- match.arg(loss)
-  n <- if (is.null(idx)) length(X[[1L]]) else length(idx)
-  out <- numeric(n)
+entry_loss <- function(X, Y) {
+  out <- numeric(length(X[[1L]]))
   for (t in seq_along(X)) {
-    x <- if (is.null(idx)) as.vector(X[[t]]) else X[[t]][idx]
-    y <- if (is.null(idx)) as.vector(Y[[t]]) else Y[[t]][idx]
-    out <- out + if (loss == "brier") {
-      (stats::plogis(x) - y)^2
-    } else {
-      log1exp(x) - y * x
-    }
+    out <- out + (stats::plogis(as.vector(X[[t]])) - as.vector(Y[[t]]))^2
   }
   out
 }
@@ -190,7 +176,7 @@ svt_df <- function(dvals, thresh, N, P, weighted = TRUE) {
 #' Mean Bernoulli variance of a fitted probability stack
 #'
 #' @param prob list of T probability matrices
-#' @returns a single number, \eqn{\frac{1}{|\Omega|T}\sum \hat\pi(1-\hat\pi)}
+#' @returns a single number, \eqn{\frac{1}{NPT}\sum \hat\pi(1-\hat\pi)}
 #' @details
 #' Named rather than inlined because the Mallows Cp surrogate is only correct
 #' when this is evaluated once at a *fixed* reference fit and held constant
@@ -233,20 +219,18 @@ stack_forward <- function(Z, mu0, nu) {
 #'
 #' @param X list of T natural parameter matrices
 #' @param Y list of T binary matrices
-#' @param Omega binary matrix of observed entries, or NULL when all are observed
-#' @returns list of T matrices \eqn{\Psi_t = \sum_{t' \ge t} P_\Omega(\sigma(X^{(t')}) - Y^{(t')})}
+#' @returns list of T matrices \eqn{\Psi_t = \sum_{t' \ge t} (\sigma(X^{(t')}) - Y^{(t')})}
 #' @details
 #' Hot kernel. Because \eqn{X^{(t')}} depends on \eqn{Z^{(t)}} for every
 #' \eqn{t' \ge t}, the gradient with respect to \eqn{Z^{(t)}} is a reverse
 #' cumulative sum, computed here in a single backward pass.
 #' @keywords internal
-grad_backward <- function(X, Y, Omega = NULL) {
+grad_backward <- function(X, Y) {
   Tn <- length(X)
   Psi <- vector("list", Tn)
   running <- NULL
   for (t in seq.int(Tn, 1L)) {
     resid <- sigmoid(X[[t]]) - Y[[t]]
-    if (!is.null(Omega)) resid <- resid * Omega
     running <- if (is.null(running)) resid else running + resid
     Psi[[t]] <- running
   }
@@ -382,31 +366,100 @@ soft_svt <- function(M, thresh, rank_guess = 5L, rank_max = NULL,
 #' Largest useful shrinkage parameter for each binary mask
 #'
 #' @param Y list of T binary matrices, or an N x P x T array
-#' @param Omega binary matrix of observed entries, or NULL when all are observed
 #' @returns a numeric vector of length T
 #' @details
-#' \eqn{\lambda_t^{max} = \| \sum_{t' \ge t} P_\Omega(\pi_{t'} - Y^{(t')}) \|_2}
+#' \eqn{\lambda_t^{max} = \| \sum_{t' \ge t} (\pi_{t'} - Y^{(t')}) \|_2}
 #' is the spectral norm of the gradient at \eqn{Z = 0}, hence the smallest
 #' shrinkage for which the estimate collapses to \eqn{\hat Z^{(t)} = 0}.
+#'
+#' **This no longer sets the search range.** It bounds the grid from above but
+#' the whole interval \eqn{[\lambda^*_t, \lambda^{max}_t]} lies on the
+#' over-shrinking side, so [lambda_star_seq()] is the anchor; see there. This is
+#' kept because [violation_diagnostics()] and the reports still use it.
+#' @seealso [lambda_star_seq()], which does set the range
 #' @importFrom RSpectra svds
 #' @export
-lambda_max_seq <- function(Y, Omega = NULL) {
+lambda_max_seq <- function(Y) {
   Y <- as_mask_list(Y, check_nested = FALSE)
   Tn <- length(Y)
-  nobs <- if (is.null(Omega)) length(Y[[1L]]) else sum(Omega)
-  pis <- vapply(Y, function(mat) {
-    if (is.null(Omega)) mean(mat) else sum(Omega * mat) / nobs
-  }, numeric(1L))
+  pis <- vapply(Y, mean, numeric(1L))
 
   out <- numeric(Tn)
   running <- NULL
   for (t in seq.int(Tn, 1L)) {
     resid <- pis[t] - Y[[t]]
-    if (!is.null(Omega)) resid <- resid * Omega
     running <- if (is.null(running)) resid else running + resid
     out[t] <- spectral_norm(running)
   }
   out
+}
+
+
+#' Noise floor shrinkage parameter for each binary mask
+#'
+#' @param Y list of T binary matrices, or an N x P x T array
+#' @param C number of pure noise replicates to average
+#' @param seed optional integer; makes the Monte Carlo draw reproducible
+#' @returns a numeric vector of length T
+#' @details
+#' \eqn{\lambda^*_t = \frac{1}{C}\sum_c \| \sum_{t' \ge t}
+#' (\pi_{t'} - Y^{(t')c*}) \|_2}, the spectral norm of the same gradient
+#' evaluated on a stack carrying *no signal*. Section 2.2 of the method note.
+#' The search range is \eqn{\lambda_t = \alpha \lambda^*_t} with
+#' \eqn{\alpha \in (0, 1]}.
+#'
+#' **The noise stack must be nested, and one shared uniform per entry is what
+#' makes it so.** Drawing \eqn{U_{ij} \sim U(0,1)} once and setting
+#' \eqn{Y^{(t')c*}_{ij} = I[U_{ij} < \pi_{t'}]} for every \eqn{t'} gives
+#' \eqn{Y^{(0)c*} \ge Y^{(1)c*} \ge \cdots} automatically. Drawing each mask
+#' independently would break the nesting and understate the floor: the shared
+#' uniform makes the residuals positively correlated across \eqn{t'}, so their
+#' variances do not simply add. Measured, an independent-entry analytic floor
+#' \eqn{\sqrt{\sum_{t' \ge t}\pi(1-\pi)}(\sqrt N + \sqrt P)} is 1.1x to 2.1x too
+#' small, the gap widening toward the dense head where more terms are summed.
+#'
+#' `C = 20` is ample and does not need tuning. The spectral norm of a random
+#' matrix has Tracy-Widom fluctuations of order \eqn{N^{-1/6}} (about 2% at
+#' \eqn{N = 150}), so averaging 20 draws puts the Monte Carlo error near 0.5%,
+#' well inside one step of the recommended grid (20%).
+#'
+#' Cost is `C` partial decompositions per threshold, paid **once per data set**:
+#' the whole \eqn{\alpha} grid rescales the same vector, so this must not be
+#' called per candidate.
+#' @seealso [lambda_max_seq()] for the upper bound
+#' @importFrom stats runif
+#' @export
+lambda_star_seq <- function(Y, C = 20L, seed = NULL) {
+  Y <- as_mask_list(Y, check_nested = FALSE)
+  Tn <- length(Y)
+  N <- nrow(Y[[1L]])
+  P <- ncol(Y[[1L]])
+  pis <- vapply(Y, mean, numeric(1L))
+
+  # This is called from inside bmfsvt() by default, so a `seed` must not leak
+  # into the caller's RNG stream: isolate it and put the stream back on exit.
+  # With `seed = NULL` the draws advance the stream normally, which is what a
+  # caller who did not ask for reproducibility expects.
+  if (!is.null(seed)) {
+    if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      old_seed <- get(".Random.seed", envir = globalenv())
+      on.exit(assign(".Random.seed", old_seed, envir = globalenv()), add = TRUE)
+    }
+    set.seed(seed)
+  }
+
+  acc <- numeric(Tn)
+  for (cc in seq_len(C)) {
+    U <- matrix(stats::runif(N * P), N, P)
+    running <- NULL
+    for (t in seq.int(Tn, 1L)) {
+      # I[U < pi_t] is the pure noise mask; the same U drives every threshold.
+      resid <- pis[t] - (U < pis[t])
+      running <- if (is.null(running)) resid else running + resid
+      acc[t] <- acc[t] + spectral_norm(running)
+    }
+  }
+  acc / C
 }
 
 

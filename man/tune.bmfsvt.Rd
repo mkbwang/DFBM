@@ -6,15 +6,14 @@
 \usage{
 tune.bmfsvt(
   Y,
-  Omega = NULL,
-  alpha_grid = 10^seq(0, -2, length.out = 10L),
-  criterion = c("boot", "cp", "holdout"),
+  alpha_grid = exp(seq(log(1), log(0.2), length.out = 10L)),
+  criterion = c("cp", "boot"),
   B = 30L,
   window = 2L,
   weighted_df = TRUE,
+  C = 20L,
   ncores = 1L,
   seed = NULL,
-  prop_holdout = 0.1,
   verbose = FALSE,
   ...
 )
@@ -22,14 +21,11 @@ tune.bmfsvt(
 \arguments{
 \item{Y}{a list of T binary matrices, or an N x P x T array}
 
-\item{Omega}{an N x P binary matrix of observed entries, or \code{NULL}}
-
-\item{alpha_grid}{shrinkage levels relative to \code{\link[=lambda_max_seq]{lambda_max_seq()}}. The
+\item{alpha_grid}{shrinkage levels relative to \code{\link[=lambda_star_seq]{lambda_star_seq()}}. The
 default is the method note's grid, \eqn{10^{-2k/(K-1)}} with \code{K = 10}.}
 
 \item{criterion}{\code{"boot"} for the full Brier plus covariance criterion,
-\code{"cp"} to stop at the Mallows Cp surrogate, \code{"holdout"} for the superseded
-held out cross entropy rule}
+\code{"cp"} to stop at the Mallows Cp surrogate}
 
 \item{B}{bootstrap replicates used by \code{"boot"}}
 
@@ -41,9 +37,7 @@ freedom; \code{FALSE} reproduces the method note's hard count}
 
 \item{ncores}{bootstrap replicates to run in parallel}
 
-\item{seed}{optional seed for the bootstrap draws, or the holdout split}
-
-\item{prop_holdout}{fraction held out, used only by \code{criterion = "holdout"}}
+\item{seed}{optional seed for the bootstrap draws}
 
 \item{verbose}{whether to report the criterion at each alpha}
 
@@ -65,47 +59,46 @@ entry including the ones the fit saw, and a held out criterion can only ever
 score entries it did not. Starting from
 \eqn{E[(\hat\pi - Y^*)^2] = E[(\hat\pi - Y)^2] + 2\,\mathrm{Cov}(\hat\pi, Y)}
 for an independent copy \eqn{Y^*},
-\deqn{M(\alpha) = \sum_{(i,j)\in\Omega}\sum_t (\hat\pi^{(t)}_{ij}(\alpha) -
-  Y^{(t)}_{ij})^2 + 2\sum_{(i,j)\in\Omega}\sum_t
+\deqn{M(\alpha) = \sum_{ij}\sum_t (\hat\pi^{(t)}_{ij}(\alpha) -
+  Y^{(t)}_{ij})^2 + 2\sum_{ij}\sum_t
   \mathrm{Cov}(\hat\pi^{(t)}_{ij}(\alpha), Y^{(t)}_{ij}).}
 The covariance is not available in closed form because every fitted value
 depends on every entry, so it is estimated in two stages: \code{\link[=cp_surrogate]{cp_surrogate()}}
 narrows the grid, then \code{\link[=boot_covariance]{boot_covariance()}} estimates the covariance by
 parametric bootstrap on the surviving candidates.
 
-\code{criterion = "holdout"} is the rule this replaced -- held out cross entropy,
-scored per (entry, threshold) pair, with the strongest shrinkage inside one
-standard error of the best. It is retained so the stages can be compared on
-the same data.
-
-\strong{What the comparison measured, on a 16 cell grid.} Mean absolute distance
-from the oracle alpha, in grid steps, with the resulting RMSE against the
-truth and the wall clock of the selection:
+\strong{Choosing between the two: use \code{"cp"}.} Measured under the
+\code{\link[=lambda_star_seq]{lambda_star_seq()}} anchor and the per-slice penalty (\code{T = 10},
+\code{pi_tail = 0.02}), as signed grid distance from the oracle alpha (the grid
+point minimizing RMSE against the true survival probabilities), HRS 300 x 20
+and square 150 x 100:
 
 \tabular{lrrr}{
-stage \tab steps \tab RMSE \tab secs \cr
-oracle \tab 0 \tab 0.1413 \tab 26 \cr
-\code{"holdout"} \tab 0.06 \tab 0.1413 \tab 26 \cr
-\code{"cp"} \tab 0.94 \tab 0.1646 \tab 26 \cr
-\code{"boot"} \tab 1.00 \tab 0.1642 \tab 176
+criterion \tab steps HRS / square \tab RMSE HRS / square \tab extra secs \cr
+oracle \tab 0 / 0 \tab 0.1273 / 0.1110 \tab -- \cr
+\code{"cp"} \tab -2 / -1 \tab 0.1444 / 0.1158 \tab 0 \cr
+\code{"boot"} \tab -3 / -2 \tab 0.1585 / 0.1250 \tab 28 / 73
 }
 
-Read that honestly: on this grid the superseded held out rule is the most
-accurate of the three, hitting the oracle in 15 of 16 cells, and the
-bootstrap costs about seven times as much as the surrogate for no gain in
-RMSE over it. The held out rule's advantage is not robust for the reason
-given above and its band width scales as \eqn{n^{-1/4}}, so it is calibrated
-to a particular validation set size rather than to the problem; but that is
-an argument from mechanism, and the number above is what was measured.
+\code{"cp"} is closer to the oracle, lower in RMSE \strong{and} free, so \code{"boot"} has
+no remaining argument in its favour on this grid. It also no longer wins on
+rank recovery: \code{"cp"} reaches 0.80 / 3.14 mean absolute per-block rank error
+against the oracle's 2.08 / 6.34. Rank recovery and estimation accuracy still
+pull in opposite directions -- the oracle alpha is the \emph{worst} of the three at
+recovering rank, because soft thresholding shrinks what it keeps -- so do not
+tune by trying to hit the true rank.
 
-\code{"boot"} does buy one thing the others do not: it is much the closest to the
-\emph{true rank}, 3.96 against 7.61 for \code{"holdout"} and 10.60 for \code{"cp"} in mean
-absolute per-block error. Rank recovery and estimation accuracy pull in
-opposite directions here -- the oracle alpha itself retains about 7 more
-components per block than the truth has, because soft thresholding shrinks
-what it keeps. Choose the criterion by which of the two you need.
+\strong{Both criteria over-shrink, and that is not fixable by reweighting the
+penalty.} Sweeping a scale \code{c} in \eqn{\mathrm{Brier} + 2c\,\mathrm{penalty}}
+over \verb{[0.05, 3]}, the selected index runs 10, 9, 7, 6, 5, 3, 2, 1 on the
+square shape and 10, 7, 2, 1 on HRS: \strong{the oracle is never selected for any
+\code{c}.} It is not a vertex of the lower convex hull of the (penalty, Brier)
+points, so no criterion of this form can reach it -- which rules out every
+rescale of \eqn{\tilde V_t} and of \code{df} at once. The residual is a shape
+mismatch in a divergence formula borrowed from the Gaussian sequence model,
+not a level error. See \code{\link[=cp_surrogate]{cp_surrogate()}}.
 }
 \seealso{
-\code{\link[=bmfsvt]{bmfsvt()}} for the fit itself, \code{\link[=lambda_max_seq]{lambda_max_seq()}} for the shrinkage
+\code{\link[=bmfsvt]{bmfsvt()}} for the fit itself, \code{\link[=lambda_star_seq]{lambda_star_seq()}} for the shrinkage
 scale.
 }

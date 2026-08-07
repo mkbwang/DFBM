@@ -4,17 +4,15 @@
 \alias{logistic_ce}
 \title{Penalized cross entropy of one binary mask}
 \usage{
-logistic_ce(X, Y, Omega = NULL)
+logistic_ce(X, Y)
 }
 \arguments{
 \item{X}{real valued matrix of natural parameters}
 
 \item{Y}{binary matrix}
-
-\item{Omega}{binary matrix of observed entries, or NULL when all are observed}
 }
 \value{
-the summed negative log likelihood over the observed entries
+the summed negative log likelihood
 }
 \description{
 Penalized cross entropy of one binary mask

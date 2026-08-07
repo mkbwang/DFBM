@@ -9,11 +9,20 @@
 #'   nested and decreasing, i.e. \eqn{Y^{(0)}_{ij} \ge Y^{(1)}_{ij} \ge \cdots},
 #'   which holds automatically when they come from thresholding one abundance
 #'   matrix with an increasing threshold sequence.
-#' @param Omega an N x P binary matrix marking observed entries, shared by every
-#'   mask. `NULL` means all entries are observed.
 #' @param lambda shrinkage parameter for each mask; a scalar is recycled. When
-#'   `NULL` the value `alpha * lambda_max_seq(Y, Omega)` is used.
-#' @param alpha shrinkage relative to the largest useful value, used only when
+#'   `NULL` the value `alpha * lambda_star_seq(Y, C)` is used.
+#' @param alpha shrinkage relative to the **noise floor** [lambda_star_seq()],
+#'   used only when `lambda` is `NULL`. Section 2.2 of the method note puts the
+#'   search range at \eqn{\alpha \in (0, 1]}, with `alpha = 1` thresholding
+#'   exactly at the floor.
+#'
+#'   **This changed meaning.** It was formerly a multiplier on
+#'   [lambda_max_seq()], where the useful values sat near 0.3-0.6; it is now a
+#'   multiplier on [lambda_star_seq()], where the measured optimum is about
+#'   **0.55** (argmin in 6 of 6 pilot cells, two shapes x three seeds). A value
+#'   carried over from the old parameterization will be wrong, not merely
+#'   suboptimal.
+#' @param C pure noise replicates used by [lambda_star_seq()], used only when
 #'   `lambda` is `NULL`.
 #' @param max_iter maximum number of outer FISTA iterations.
 #' @param tol relative change in `Z` below which the algorithm stops.
@@ -81,11 +90,11 @@
 #'
 #' A single mask (`T = 1`) reduces this to Algorithm 1.
 #'
-#' @seealso [cv.bmfsvt()] for choosing `alpha`, [lambda_max_seq()] for the
+#' @seealso [tune.bmfsvt()] for choosing `alpha`, [lambda_star_seq()] for the
 #'   shrinkage scale.
 #' @importFrom stats plogis qlogis
 #' @export
-bmfsvt <- function(Y, Omega = NULL, lambda = NULL, alpha = 0.1,
+bmfsvt <- function(Y, lambda = NULL, alpha = 0.55, C = 20L,
                    max_iter = 200L, tol = 1e-5, gamma = 1.1, L_rewind = gamma,
                    delta = 1e-6,
                    rank_init = 5L, rank_max = NULL, rank_step = 2L,
@@ -105,21 +114,10 @@ bmfsvt <- function(Y, Omega = NULL, lambda = NULL, alpha = 0.1,
   Tn <- length(Y)
   N <- nrow(Y[[1L]])
   P <- ncol(Y[[1L]])
-
-  if (!is.null(Omega)) {
-    storage.mode(Omega) <- "double"
-    if (!identical(dim(Omega), c(N, P))) {
-      stop("`Omega` must have the same dimensions as the binary masks.")
-    }
-    if (any(Omega != 0 & Omega != 1)) stop("`Omega` must contain only 0 and 1.")
-  }
-  nobs <- if (is.null(Omega)) N * P else sum(Omega)
-  if (nobs == 0) stop("`Omega` marks no observed entries.")
+  nobs <- N * P
 
   # ---- offsets and Lipschitz constants (Algorithm 2, lines 1-8) -------------
-  pis <- vapply(Y, function(mat) {
-    if (is.null(Omega)) mean(mat) else sum(Omega * mat) / nobs
-  }, numeric(1L))
+  pis <- vapply(Y, mean, numeric(1L))
   eps <- 1 / (2 * nobs)
   if (any(pis <= 0 | pis >= 1)) {
     warning("some masks are entirely 0 or entirely 1; their offsets are clamped.")
@@ -137,8 +135,11 @@ bmfsvt <- function(Y, Omega = NULL, lambda = NULL, alpha = 0.1,
   L <- pmax(L, 1e-8)
 
   # ---- shrinkage parameters -------------------------------------------------
+  # The anchor is the noise floor, not lambda_max: the whole interval
+  # [lambda*, lambda_max] over-shrinks, so a fraction of lambda* is what the
+  # search range needs to be. See lambda_star_seq().
   if (is.null(lambda)) {
-    lambda <- alpha * lambda_max_seq(Y, Omega)
+    lambda <- alpha * lambda_star_seq(Y, C = C)
   } else if (length(lambda) == 1L) {
     lambda <- rep(lambda, Tn)
   }
@@ -178,8 +179,8 @@ bmfsvt <- function(Y, Omega = NULL, lambda = NULL, alpha = 0.1,
 
     # Psi depends only on the extrapolation point W, so it is computed once
     # per outer iteration rather than once per backtrack.
-    Psi <- grad_backward(X, Y, Omega)
-    f_W <- stack_ce(X, Y, Omega)
+    Psi <- grad_backward(X, Y)
+    f_W <- stack_ce(X, Y)
 
     bt <- 0L
     repeat {
@@ -206,7 +207,7 @@ bmfsvt <- function(Y, Omega = NULL, lambda = NULL, alpha = 0.1,
       }
 
       Xp <- stack_forward(Zp, mu[1L], nu)
-      f_new <- stack_ce(Xp, Y, Omega)
+      f_new <- stack_ce(Xp, Y)
 
       # Q(Z' | W) = f(X_W) + <Z' - W, Psi> + sum_t L_t/2 ||Z'^(t) - W^(t)||_F^2
       quad <- f_W
@@ -291,7 +292,7 @@ bmfsvt <- function(Y, Omega = NULL, lambda = NULL, alpha = 0.1,
   if (!converged) X <- stack_forward(Z, mu[1L], nu)
 
   # ---- constraint diagnostics (lines 58-63) --------------------------------
-  diag_bd <- violation_diagnostics(Z, X, Y, Omega, lambda, L, nu, ranks,
+  diag_bd <- violation_diagnostics(Z, X, Y, lambda, L, nu, ranks,
                                    rank_max, rank_step, svd_method)
 
   list(X = X,
@@ -314,12 +315,11 @@ bmfsvt <- function(Y, Omega = NULL, lambda = NULL, alpha = 0.1,
 #' Stacked cross entropy over all masks
 #' @param X list of natural parameter matrices
 #' @param Y list of binary matrices
-#' @param Omega observed entry mask or NULL
 #' @returns the summed negative log likelihood
 #' @keywords internal
-stack_ce <- function(X, Y, Omega = NULL) {
+stack_ce <- function(X, Y) {
   total <- 0
-  for (t in seq_along(X)) total <- total + logistic_ce(X[[t]], Y[[t]], Omega)
+  for (t in seq_along(X)) total <- total + logistic_ce(X[[t]], Y[[t]])
   total
 }
 
@@ -353,7 +353,6 @@ nuclear_penalty <- function(Z, dvals, lambda, n_clipped, mode = "approx") {
 #' @param Z solution blocks
 #' @param X solution natural parameters
 #' @param Y list of binary masks
-#' @param Omega observed entry mask or NULL
 #' @param lambda shrinkage parameters
 #' @param L Lipschitz constants
 #' @param nu offset increments
@@ -378,13 +377,13 @@ nuclear_penalty <- function(Z, dvals, lambda, n_clipped, mode = "approx") {
 #' way: the objective gap and the difference in fitted probabilities are the
 #' quantities that speak to suboptimality.
 #' @keywords internal
-violation_diagnostics <- function(Z, X, Y, Omega, lambda, L, nu, ranks,
+violation_diagnostics <- function(Z, X, Y, lambda, L, nu, ranks,
                                   rank_max, rank_step, svd_method) {
   Tn <- length(Z)
   if (Tn < 2L) return(list(b = numeric(0L), d = numeric(0L)))
 
-  nobs <- if (is.null(Omega)) length(Y[[1L]]) else sum(Omega)
-  Psi <- grad_backward(X, Y, Omega)
+  nobs <- length(Y[[1L]])
+  Psi <- grad_backward(X, Y)
   b <- numeric(Tn - 1L)
   d <- numeric(Tn - 1L)
   for (t in seq.int(2L, Tn)) {
@@ -392,7 +391,6 @@ violation_diagnostics <- function(Z, X, Y, Omega, lambda, L, nu, ranks,
                     rank_guess = ranks[t], rank_max = rank_max,
                     rank_step = rank_step, method = svd_method)
     margin <- svt$mat + nu[t - 1L]
-    if (!is.null(Omega)) margin[Omega == 0] <- -Inf
     b[t - 1L] <- sum(margin > 0) / nobs
     d[t - 1L] <- max(0, max(margin))
   }
@@ -401,62 +399,23 @@ violation_diagnostics <- function(Z, X, Y, Omega, lambda, L, nu, ranks,
 }
 
 
-#' Split observed entries into training and validation sets
-#'
-#' @param Omega binary matrix of observed entries
-#' @param prop fraction to hold out
-#' @returns a list with `train` and `val` binary matrices
-#' @details
-#' Entries are held out uniformly at random, then any row or column left with no
-#' training entry has one returned to it. Without that repair, a fully held out
-#' row makes its factor unidentifiable and the validation loss for that row
-#' measures nothing but the intercept.
-#' @keywords internal
-holdout_split <- function(Omega, prop = 0.1) {
-  idx <- which(Omega == 1)
-  n_val <- floor(prop * length(idx))
-  train <- Omega
-  if (n_val == 0L) {
-    return(list(train = train, val = matrix(0, nrow(Omega), ncol(Omega))))
-  }
-  val_idx <- sample(idx, n_val)
-  train[val_idx] <- 0
-
-  repair <- function(train, val_idx, margin) {
-    counts <- if (margin == 1L) rowSums(train) else colSums(train)
-    empty <- which(counts == 0)
-    for (k in empty) {
-      pos <- arrayInd(val_idx, dim(train))[, margin]
-      cand <- which(pos == k)
-      if (length(cand) > 0L) {
-        give_back <- val_idx[cand[1L]]
-        train[give_back] <- 1
-        val_idx <- setdiff(val_idx, give_back)
-      }
-    }
-    list(train = train, val_idx = val_idx)
-  }
-  r <- repair(train, val_idx, 1L)
-  r <- repair(r$train, r$val_idx, 2L)
-
-  val <- matrix(0, nrow(Omega), ncol(Omega))
-  val[r$val_idx] <- 1
-  list(train = r$train, val = val)
-}
 
 
 #' Fit a whole shrinkage path with warm starts
 #'
 #' @param Y a list of T binary matrices, or an N x P x T array
-#' @param Omega an N x P binary matrix of observed entries, or `NULL`
-#' @param alpha_grid shrinkage levels relative to [lambda_max_seq()]; sorted
+#' @param alpha_grid shrinkage levels relative to [lambda_star_seq()]; sorted
 #'   decreasing internally so that each fit warm starts the next
+#' @param C pure noise replicates for [lambda_star_seq()]
+#' @param seed optional integer making the [lambda_star_seq()] draw reproducible
 #' @param ... further arguments passed to [bmfsvt()]
 #'
 #' @returns a list holding the grid, the per-alpha increment matrices `Z`, the
 #'   shared offsets `mu` and `nu`, and one row of diagnostics per alpha:
-#'   `brier` (summed over the observed entries and every mask), `v_tilde`,
-#'   `df` and `df_hard`, `ranks`, `n_iter`, `n_svd`, `converged`, `elapsed`.
+#'   `brier` (summed over every entry and every mask), `v_tilde`, `df` and
+#'   `df_hard` (each a K x T **matrix**, per slice), `ranks`, `n_iter`, `n_svd`,
+#'   `converged`, `elapsed`. `v_t` holds the per-slice surrogate variance
+#'   \eqn{\pi_t(1-\pi_t)}, which depends on the data alone and not on any fit.
 #'
 #' @details
 #' Every selection criterion in the package reads this one object, so no two
@@ -466,24 +425,34 @@ holdout_split <- function(Omega, prop = 0.1) {
 #' mask prevalences alone and so are shared by the whole path, which makes
 #' `sigma(stack_forward(Z, mu, nu))` enough to recover any fitted probability on
 #' demand. That is three stored matrices per alpha rather than nine. It also
-#' removes the need for a refit once an alpha is chosen: the path was fit on all
-#' of `Omega` to begin with, so the selected fit is already in hand.
+#' removes the need for a refit once an alpha is chosen: the path was fit on
+#' every entry to begin with, so the selected fit is already in hand.
+#'
+#' `lambda_star_seq()` is evaluated **once** here, not once per candidate: the
+#' whole grid rescales the same vector, and the Monte Carlo cost is `C` partial
+#' decompositions per threshold.
+#'
+#' `df` is kept per slice rather than summed because the Cp penalty of section
+#' 2.3 weights each slice by its own \eqn{\tilde V_t}; see [cp_surrogate()].
 #' @keywords internal
-bmfsvt_path <- function(Y, Omega = NULL, alpha_grid, ...) {
+bmfsvt_path <- function(Y, alpha_grid, C = 20L, seed = NULL, ...) {
   Y <- as_mask_list(Y, check_nested = TRUE)
   N <- nrow(Y[[1L]])
   P <- ncol(Y[[1L]])
   Tn <- length(Y)
-  if (is.null(Omega)) Omega <- matrix(1, N, P)
-  storage.mode(Omega) <- "double"
 
   alpha_grid <- sort(alpha_grid, decreasing = TRUE)
   K <- length(alpha_grid)
-  lmax <- lambda_max_seq(Y, Omega)
-  obs_idx <- which(Omega == 1)
+  lstar <- lambda_star_seq(Y, C = C, seed = seed)
+
+  # The surrogate variance of section 2.3, one per slice, from the marginal
+  # prevalences. It must NOT be read off a fit: see cp_surrogate().
+  pis <- vapply(Y, mean, numeric(1L))
+  v_t <- pis * (1 - pis)
 
   Zs <- vector("list", K)
-  brier <- v_tilde <- df_w <- df_h <- elapsed <- numeric(K)
+  brier <- v_tilde <- elapsed <- numeric(K)
+  df_w <- df_h <- matrix(NA_real_, K, Tn)
   n_iter <- n_svd <- integer(K)
   converged <- logical(K)
   ranks <- matrix(NA_integer_, K, Tn)
@@ -492,8 +461,7 @@ bmfsvt_path <- function(Y, Omega = NULL, alpha_grid, ...) {
   Z_warm <- NULL
   for (k in seq_len(K)) {
     t0 <- proc.time()[["elapsed"]]
-    fit <- bmfsvt(Y, Omega = Omega, lambda = alpha_grid[k] * lmax,
-                  Z_init = Z_warm, ...)
+    fit <- bmfsvt(Y, lambda = alpha_grid[k] * lstar, Z_init = Z_warm, ...)
     elapsed[k] <- proc.time()[["elapsed"]] - t0
     Z_warm <- fit$Z
     Zs[[k]] <- fit$Z
@@ -501,23 +469,26 @@ bmfsvt_path <- function(Y, Omega = NULL, alpha_grid, ...) {
       mu <- fit$mu
       nu <- fit$nu
     }
-    lam <- alpha_grid[k] * lmax
-    brier[k] <- sum(entry_loss(fit$X, Y, obs_idx, loss = "brier"))
-    v_tilde[k] <- mean_bernoulli_var(lapply(fit$prob, function(m) m[obs_idx]))
+    lam <- alpha_grid[k] * lstar
+    brier[k] <- sum(entry_loss(fit$X, Y))
+    # Retained only for the `cp_note_asis` control, which re-estimates the
+    # variance at every alpha in order to demonstrate that doing so fails.
+    v_tilde[k] <- mean_bernoulli_var(fit$prob)
     # The proximal step subtracts lambda_t / L_t, not lambda_t, so that is what
     # has to be added back to recover the pre-shrinkage singular values.
-    df_w[k] <- sum(svt_df(fit$dvals, lam / fit$L, N, P, weighted = TRUE))
-    df_h[k] <- sum(svt_df(fit$dvals, lam / fit$L, N, P, weighted = FALSE))
+    df_w[k, ] <- svt_df(fit$dvals, lam / fit$L, N, P, weighted = TRUE)
+    df_h[k, ] <- svt_df(fit$dvals, lam / fit$L, N, P, weighted = FALSE)
     ranks[k, ] <- fit$ranks
     n_iter[k] <- fit$n_iter
     n_svd[k] <- fit$n_svd
     converged[k] <- fit$converged
   }
 
-  list(Y = Y, Omega = Omega, obs_idx = obs_idx,
-       alpha = alpha_grid, lambda_max = lmax, Z = Zs, mu = mu, nu = nu,
+  list(Y = Y,
+       alpha = alpha_grid, lambda_star = lstar, Z = Zs, mu = mu, nu = nu,
        N = N, P = P, Tn = Tn,
-       brier = brier, v_tilde = v_tilde, df = df_w, df_hard = df_h,
+       brier = brier, v_tilde = v_tilde, v_t = v_t,
+       df = df_w, df_hard = df_h,
        ranks = ranks, n_iter = n_iter, n_svd = n_svd,
        converged = converged, elapsed = elapsed)
 }
@@ -537,43 +508,84 @@ path_prob <- function(path, k) {
 #' Mallows Cp surrogate for the shrinkage path
 #'
 #' @param path an object from [bmfsvt_path()]
-#' @param v_ref fixed variance estimate; `NULL` takes it from the strongest
-#'   shrinkage on the grid
+#' @param v_ref fixed per-slice variance vector of length T; `NULL` uses
+#'   `path$v_t`, i.e. \eqn{\pi_t(1-\pi_t)} from the marginal prevalences. A
+#'   scalar is recycled, which reproduces the superseded pooled form.
 #' @param weighted whether to use the shrinkage weighted degrees of freedom
 #' @returns a list with the criterion `cp`, the selected index `index`, and the
 #'   `v_ref` actually used
 #'
 #' @details
-#' \eqn{M'(\alpha) = \sum_{\Omega}\sum_t (\hat\pi^{(t)}_{ij}(\alpha) -
-#' Y^{(t)}_{ij})^2 + 2 \tilde V \, \mathrm{df}(\alpha)}, used to narrow the grid
-#' before the bootstrap stage rather than to make the final choice.
+#' \eqn{M'(\alpha) = \sum_{ij}\sum_t (\hat\pi^{(t)}_{ij}(\alpha) -
+#' Y^{(t)}_{ij})^2 + 2 \sum_t \tilde V_t \, \mathrm{df}_t(\alpha)}, section 2.3
+#' of the method note.
 #'
-#' Two departures from a plain reading of the method note are deliberate, and
-#' both were confirmed on a 16 cell simulation grid against an oracle that
-#' minimizes RMSE against the true survival probabilities.
+#' Three departures from a plain reading of an earlier draft are deliberate.
+#'
+#' **The penalty is a sum of products, not a product of sums.** Each slice is
+#' weighted by its own \eqn{\tilde V_t = \pi_t(1-\pi_t)} rather than by a pooled
+#' average times the total `df`. Pooling is a poor approximation here because
+#' \eqn{\tilde V_t} and \eqn{\mathrm{df}_t} are *correlated* across `t`
+#' (measured \eqn{+0.49} at the oracle alpha): \eqn{\tilde V_t} is hump shaped,
+#' peaking where the prevalences cross 0.5, and `df` is front loaded under the
+#' [lambda_star_seq()] anchor. **The per-slice form therefore makes the penalty
+#' larger, not smaller** -- 9% at the oracle, 18% at weak shrinkage, since
+#' Chebyshev's sum inequality runs the other way for like-ordered sequences.
+#' Its value is conditioning, not level: the pooled criterion was flat across
+#' half the grid (a 0.8% range over five candidates, its argmin winning by 0.1%,
+#' i.e. noise), while the per-slice one has 10x to 20x more curvature and a
+#' decisive minimum. **It is not a fix for over-shrinkage** and should not be
+#' described as one.
 #'
 #' **`v_ref` is not re-estimated at each alpha.** Doing so breaks the surrogate:
 #' as the shrinkage weakens the fit drives its probabilities toward 0 and 1, so
 #' the plug-in variance collapses (0.174 to 0.018 across the K = 10 grid) and
-#' the penalty vanishes exactly where the degrees of freedom explode. The Brier
-#' term collapses in step, so the criterion is minimized at the weakest
-#' shrinkage on the grid -- in **16 of 16** cells -- and the candidate window
-#' handed to the bootstrap never contains a sensible alpha. Measured RMSE 0.316
-#' against 0.141 for the oracle. In Mallows Cp the variance is a fixed estimate,
-#' not one re-read off each candidate model. The default takes it from the
-#' intercept-only end of the grid, where \eqn{Z = 0} and
-#' \eqn{\hat\pi^{(t)} = \pi_t}; that is parameter free and an upper bound on the
-#' mean Bernoulli variance, so it errs toward stronger shrinkage.
+#' the penalty vanishes exactly where the degrees of freedom explode. It then
+#' selects the weakest alpha on the grid in **10 of 10** cells, retaining rank
+#' 17.3 to 45.6 against a truth near 3.1. In Mallows Cp the variance is a fixed
+#' estimate, not one re-read off each candidate model.
+#'
+#' Note that the variance comes from the *prevalences*, never from a fit on the
+#' path. Reading it off the first candidate used to be equivalent, because the
+#' old grid's first point (`alpha = 1` on [lambda_max_seq()]) collapsed every
+#' block to zero. Under the [lambda_star_seq()] anchor `alpha = 1` still retains
+#' rank, so that shortcut is now silently wrong.
+#'
+#' \eqn{\pi_t(1-\pi_t)} at the marginal prevalence is an upper bound on the true
+#' mean Bernoulli variance, by concavity of \eqn{\pi(1-\pi)} and Jensen --
+#' measured **1.40x** too large -- so the penalty is conservative and errs toward
+#' stronger shrinkage, which is the direction the criterion is measurably biased.
+#'
+#' **Do not try to fix that bias by shrinking \eqn{\tilde V_t}, or by rescaling
+#' `df`, or by swapping \eqn{L_t} for the average curvature. All three were
+#' measured and none works.** Sweeping a scale `c` in
+#' \eqn{\mathrm{Brier} + 2c\,\mathrm{penalty}} over `[0.05, 3]`, the selected
+#' index runs 10, 9, 7, 6, 5, 3, 2, 1 on the square shape and 10, 7, 2, 1 on HRS:
+#' the oracle is **never** selected, for any `c`. It is not a vertex of the lower
+#' convex hull of the (penalty, Brier) points, and every constant reweighting --
+#' the 1.40x Jensen factor included, which lands at `c ~ 0.71` and selects k = 9,
+#' far *past* the oracle -- picks some hull vertex. Substituting the average
+#' fitted curvature \eqn{\bar\nu_t} for \eqn{L_t} fails differently and worse: it
+#' is 10x to 100x smaller than the backtracked \eqn{L_t}, so `df` collapses to
+#' 5-15% of its value and the weakest alpha on the grid wins in every cell.
+#'
+#' The residual is a **shape** mismatch, not a level error: the divergence
+#' \eqn{d_r/(d_r + \tau)} is borrowed from soft thresholding a Gaussian matrix
+#' directly, whereas this estimator is a logistic MLE reached iteratively. For
+#' k = 4 to win, the penalty would have to grow by less than 1256 from k = 3 to 4
+#' and more than 1522 from k = 4 to 5; it grows by 1484 and 1793. An ~18% local
+#' error in one interval, costing about 4.3% RMSE.
 #'
 #' **`weighted = TRUE` by default.** The hard count \eqn{r_t(N+P-r_t)} treats
-#' every retained singular value as a whole free parameter and over-penalizes;
-#' it selected one of the two strongest alphas on the grid in **16 of 16**
-#' cells, RMSE 0.197. See [svt_df()].
+#' every retained singular value as a whole free parameter and over-penalizes.
+#' See [svt_df()].
 #' @keywords internal
 cp_surrogate <- function(path, v_ref = NULL, weighted = TRUE) {
-  if (is.null(v_ref)) v_ref <- path$v_tilde[1L]
+  if (is.null(v_ref)) v_ref <- path$v_t
+  if (length(v_ref) == 1L) v_ref <- rep(v_ref, path$Tn)
   df <- if (weighted) path$df else path$df_hard
-  cp <- path$brier + 2 * v_ref * df
+  # df is K x T; weight each slice by its own variance, then sum over slices.
+  cp <- path$brier + 2 * as.vector(df %*% v_ref)
   list(cp = cp, index = which.min(cp), v_ref = v_ref)
 }
 
@@ -632,7 +644,6 @@ boot_covariance <- function(path, index, B = 30L, window = 2L, ncores = 1L,
   N <- path$N
   P <- path$P
   Tn <- path$Tn
-  Omega <- path$Omega
 
   # Resampling needs a monotone probability stack or the draws are not nested.
   # Clipping already guarantees it, but `clip = FALSE` reaches here through
@@ -672,8 +683,7 @@ boot_covariance <- function(path, index, B = 30L, window = 2L, ncores = 1L,
       S3 <- zero_stack()
       for (sd in seeds) {
         Yb <- draw(sd)
-        fb <- bmfsvt(Yb, Omega = Omega,
-                     lambda = path$alpha[k] * path$lambda_max,
+        fb <- bmfsvt(Yb, lambda = path$alpha[k] * path$lambda_star,
                      Z_init = path$Z[[k]], ...)
         for (t in seq_len(Tn)) {
           S1[[t]] <- S1[[t]] + fb$prob[[t]]
@@ -697,7 +707,7 @@ boot_covariance <- function(path, index, B = 30L, window = 2L, ncores = 1L,
     tot <- 0
     for (t in seq_len(Tn)) {
       contrib <- S3[[t]] - S1[[t]] * S2[[t]] / B
-      tot <- tot + sum(contrib[path$obs_idx])
+      tot <- tot + sum(contrib)
     }
     tot / (B - 1)
   }, numeric(1L))
@@ -711,20 +721,17 @@ boot_covariance <- function(path, index, B = 30L, window = 2L, ncores = 1L,
 #' Choose the shrinkage level for bmfsvt
 #'
 #' @param Y a list of T binary matrices, or an N x P x T array
-#' @param Omega an N x P binary matrix of observed entries, or `NULL`
-#' @param alpha_grid shrinkage levels relative to [lambda_max_seq()]. The
+#' @param alpha_grid shrinkage levels relative to [lambda_star_seq()]. The
 #'   default is the method note's grid, \eqn{10^{-2k/(K-1)}} with `K = 10`.
 #' @param criterion `"boot"` for the full Brier plus covariance criterion,
-#'   `"cp"` to stop at the Mallows Cp surrogate, `"holdout"` for the superseded
-#'   held out cross entropy rule
+#'   `"cp"` to stop at the Mallows Cp surrogate
 #' @param B bootstrap replicates used by `"boot"`
 #' @param window how many grid steps either side of the surrogate's choice the
 #'   bootstrap examines
 #' @param weighted_df whether the surrogate uses shrinkage weighted degrees of
 #'   freedom; `FALSE` reproduces the method note's hard count
 #' @param ncores bootstrap replicates to run in parallel
-#' @param seed optional seed for the bootstrap draws, or the holdout split
-#' @param prop_holdout fraction held out, used only by `criterion = "holdout"`
+#' @param seed optional seed for the bootstrap draws
 #' @param verbose whether to report the criterion at each alpha
 #' @param ... further arguments passed to [bmfsvt()]
 #'
@@ -740,75 +747,65 @@ boot_covariance <- function(path, index, B = 30L, window = 2L, ncores = 1L,
 #' score entries it did not. Starting from
 #' \eqn{E[(\hat\pi - Y^*)^2] = E[(\hat\pi - Y)^2] + 2\,\mathrm{Cov}(\hat\pi, Y)}
 #' for an independent copy \eqn{Y^*},
-#' \deqn{M(\alpha) = \sum_{(i,j)\in\Omega}\sum_t (\hat\pi^{(t)}_{ij}(\alpha) -
-#'   Y^{(t)}_{ij})^2 + 2\sum_{(i,j)\in\Omega}\sum_t
+#' \deqn{M(\alpha) = \sum_{ij}\sum_t (\hat\pi^{(t)}_{ij}(\alpha) -
+#'   Y^{(t)}_{ij})^2 + 2\sum_{ij}\sum_t
 #'   \mathrm{Cov}(\hat\pi^{(t)}_{ij}(\alpha), Y^{(t)}_{ij}).}
 #' The covariance is not available in closed form because every fitted value
 #' depends on every entry, so it is estimated in two stages: [cp_surrogate()]
 #' narrows the grid, then [boot_covariance()] estimates the covariance by
 #' parametric bootstrap on the surviving candidates.
 #'
-#' `criterion = "holdout"` is the rule this replaced -- held out cross entropy,
-#' scored per (entry, threshold) pair, with the strongest shrinkage inside one
-#' standard error of the best. It is retained so the stages can be compared on
-#' the same data.
-#'
-#' **What the comparison measured, on a 16 cell grid.** Mean absolute distance
-#' from the oracle alpha, in grid steps, with the resulting RMSE against the
-#' truth and the wall clock of the selection:
+#' **Choosing between the two: use `"cp"`.** Measured under the
+#' [lambda_star_seq()] anchor and the per-slice penalty (`T = 10`,
+#' `pi_tail = 0.02`), as signed grid distance from the oracle alpha (the grid
+#' point minimizing RMSE against the true survival probabilities), HRS 300 x 20
+#' and square 150 x 100:
 #'
 #' \tabular{lrrr}{
-#'   stage \tab steps \tab RMSE \tab secs \cr
-#'   oracle \tab 0 \tab 0.1413 \tab 26 \cr
-#'   `"holdout"` \tab 0.06 \tab 0.1413 \tab 26 \cr
-#'   `"cp"` \tab 0.94 \tab 0.1646 \tab 26 \cr
-#'   `"boot"` \tab 1.00 \tab 0.1642 \tab 176
+#'   criterion \tab steps HRS / square \tab RMSE HRS / square \tab extra secs \cr
+#'   oracle \tab 0 / 0 \tab 0.1273 / 0.1110 \tab -- \cr
+#'   `"cp"` \tab -2 / -1 \tab 0.1444 / 0.1158 \tab 0 \cr
+#'   `"boot"` \tab -3 / -2 \tab 0.1585 / 0.1250 \tab 28 / 73
 #' }
 #'
-#' Read that honestly: on this grid the superseded held out rule is the most
-#' accurate of the three, hitting the oracle in 15 of 16 cells, and the
-#' bootstrap costs about seven times as much as the surrogate for no gain in
-#' RMSE over it. The held out rule's advantage is not robust for the reason
-#' given above and its band width scales as \eqn{n^{-1/4}}, so it is calibrated
-#' to a particular validation set size rather than to the problem; but that is
-#' an argument from mechanism, and the number above is what was measured.
+#' `"cp"` is closer to the oracle, lower in RMSE **and** free, so `"boot"` has
+#' no remaining argument in its favour on this grid. It also no longer wins on
+#' rank recovery: `"cp"` reaches 0.80 / 3.14 mean absolute per-block rank error
+#' against the oracle's 2.08 / 6.34. Rank recovery and estimation accuracy still
+#' pull in opposite directions -- the oracle alpha is the *worst* of the three at
+#' recovering rank, because soft thresholding shrinks what it keeps -- so do not
+#' tune by trying to hit the true rank.
 #'
-#' `"boot"` does buy one thing the others do not: it is much the closest to the
-#' *true rank*, 3.96 against 7.61 for `"holdout"` and 10.60 for `"cp"` in mean
-#' absolute per-block error. Rank recovery and estimation accuracy pull in
-#' opposite directions here -- the oracle alpha itself retains about 7 more
-#' components per block than the truth has, because soft thresholding shrinks
-#' what it keeps. Choose the criterion by which of the two you need.
+#' **Both criteria over-shrink, and that is not fixable by reweighting the
+#' penalty.** Sweeping a scale `c` in \eqn{\mathrm{Brier} + 2c\,\mathrm{penalty}}
+#' over `[0.05, 3]`, the selected index runs 10, 9, 7, 6, 5, 3, 2, 1 on the
+#' square shape and 10, 7, 2, 1 on HRS: **the oracle is never selected for any
+#' `c`.** It is not a vertex of the lower convex hull of the (penalty, Brier)
+#' points, so no criterion of this form can reach it -- which rules out every
+#' rescale of \eqn{\tilde V_t} and of `df` at once. The residual is a shape
+#' mismatch in a divergence formula borrowed from the Gaussian sequence model,
+#' not a level error. See [cp_surrogate()].
 #'
-#' @seealso [bmfsvt()] for the fit itself, [lambda_max_seq()] for the shrinkage
+#' @seealso [bmfsvt()] for the fit itself, [lambda_star_seq()] for the shrinkage
 #'   scale.
 #' @export
-tune.bmfsvt <- function(Y, Omega = NULL,
-                        alpha_grid = 10^seq(0, -2, length.out = 10L),
-                        criterion = c("boot", "cp", "holdout"),
+tune.bmfsvt <- function(Y,
+                        alpha_grid = exp(seq(log(1), log(0.2), length.out = 10L)),
+                        criterion = c("cp", "boot"),
                         B = 30L, window = 2L, weighted_df = TRUE,
-                        ncores = 1L, seed = NULL, prop_holdout = 0.1,
-                        verbose = FALSE, ...) {
+                        C = 20L, ncores = 1L, seed = NULL, verbose = FALSE,
+                        ...) {
   criterion <- match.arg(criterion)
   Y <- as_mask_list(Y, check_nested = TRUE)
-  N <- nrow(Y[[1L]])
-  P <- ncol(Y[[1L]])
-  if (is.null(Omega)) Omega <- matrix(1, N, P)
-  storage.mode(Omega) <- "double"
 
-  if (criterion == "holdout") {
-    return(tune_holdout(Y, Omega, alpha_grid, prop_holdout, seed, verbose, ...))
-  }
-
-  path <- bmfsvt_path(Y, Omega = Omega, alpha_grid = alpha_grid, ...)
+  path <- bmfsvt_path(Y, alpha_grid = alpha_grid, C = C, seed = seed, ...)
   cp <- cp_surrogate(path, weighted = weighted_df)
   index <- cp$index
   boot <- NULL
   M <- rep(NA_real_, length(path$alpha))
 
   if (verbose) {
-    message(sprintf("Cp surrogate picks alpha=%.4g (v_ref=%.4f)",
-                    path$alpha[cp$index], cp$v_ref))
+    message(sprintf("Cp surrogate picks alpha=%.4g", path$alpha[cp$index]))
   }
 
   if (criterion == "boot") {
@@ -823,8 +820,7 @@ tune.bmfsvt <- function(Y, Omega = NULL,
 
   # Warm started from the stored increments, so this converges almost at once
   # and buys a complete fit object including the constraint diagnostics.
-  final <- bmfsvt(Y, Omega = Omega,
-                  lambda = path$alpha[index] * path$lambda_max,
+  final <- bmfsvt(Y, lambda = path$alpha[index] * path$lambda_star,
                   Z_init = path$Z[[index]], ...)
 
   list(fit = final,
@@ -834,85 +830,12 @@ tune.bmfsvt <- function(Y, Omega = NULL,
        alpha_cp = path$alpha[cp$index],
        v_ref = cp$v_ref,
        path = data.frame(alpha = path$alpha, brier = path$brier,
-                         v_tilde = path$v_tilde, df = path$df,
-                         df_hard = path$df_hard, cp = cp$cp, M = M,
+                         v_tilde = path$v_tilde,
+                         df = rowSums(path$df),
+                         df_hard = rowSums(path$df_hard), cp = cp$cp, M = M,
                          mean_rank = rowMeans(path$ranks),
                          n_iter = path$n_iter, n_svd = path$n_svd,
                          converged = path$converged, elapsed = path$elapsed),
        ranks = path$ranks,
        boot = boot)
-}
-
-
-#' The superseded held out cross entropy rule
-#'
-#' @param Y list of masks, already coerced
-#' @param Omega observation mask, already coerced
-#' @param alpha_grid shrinkage grid
-#' @param prop_holdout fraction held out
-#' @param seed optional seed for the split
-#' @param verbose whether to report each alpha
-#' @param ... passed to [bmfsvt()]
-#' @returns the same shape as [tune.bmfsvt()]
-#' @details
-#' Kept so the method note's three stages can be compared against what came
-#' before them, on identical data. Scores cross entropy per (entry, threshold)
-#' pair on the held out entries and takes the strongest shrinkage within one
-#' standard error of the best. The standard error treats the T terms belonging
-#' to one entry as independent, which they are not, so the band it produces is
-#' narrower than an honest one; that is part of what is being compared.
-#' @keywords internal
-tune_holdout <- function(Y, Omega, alpha_grid, prop_holdout = 0.1, seed = NULL,
-                         verbose = FALSE, ...) {
-  if (!is.null(seed)) set.seed(seed)
-  split <- holdout_split(Omega, prop_holdout)
-  if (sum(split$val) == 0) {
-    stop("the holdout split produced no validation entries; ",
-         "increase `prop_holdout` or supply a denser `Omega`.")
-  }
-  alpha_grid <- sort(alpha_grid, decreasing = TRUE)
-  lmax <- lambda_max_seq(Y, split$train)
-  val_idx <- which(split$val == 1)
-
-  losses <- ses <- numeric(length(alpha_grid))
-  Z_warm <- NULL
-  for (i in seq_along(alpha_grid)) {
-    fit <- bmfsvt(Y, Omega = split$train, lambda = alpha_grid[i] * lmax,
-                  Z_init = Z_warm, ...)
-    Z_warm <- fit$Z
-    ce <- unlist(lapply(seq_along(Y), function(t) {
-      x <- fit$X[[t]][val_idx]
-      log1exp(x) - Y[[t]][val_idx] * x
-    }))
-    losses[i] <- mean(ce)
-    ses[i] <- stats::sd(ce) / sqrt(length(ce))
-    if (verbose) {
-      message(sprintf("alpha=%.4g  held out cross entropy=%.6f (se %.6f)",
-                      alpha_grid[i], losses[i], ses[i]))
-    }
-  }
-
-  # `index_min` is the raw argmin, which is the quantity the under-shrinkage
-  # complaint is actually about; `index` adds the one standard error band, which
-  # pushes back toward stronger shrinkage. Both are returned because the two can
-  # differ by a grid step or more and reporting only the second hides whether
-  # the band is doing the work.
-  index_min <- which.min(losses)
-  within <- which(losses <= losses[index_min] + ses[index_min])
-  index <- within[1L]                     # grid is decreasing: strongest inside
-
-  final <- bmfsvt(Y, Omega = Omega,
-                  lambda = alpha_grid[index] * lambda_max_seq(Y, Omega), ...)
-
-  list(fit = final,
-       alpha = alpha_grid[index],
-       index = index,
-       index_min = index_min,
-       alpha_min = alpha_grid[index_min],
-       criterion = "holdout",
-       alpha_cp = NA_real_,
-       v_ref = NA_real_,
-       path = data.frame(alpha = alpha_grid, val_loss = losses, se = ses),
-       ranks = NULL,
-       boot = NULL)
 }

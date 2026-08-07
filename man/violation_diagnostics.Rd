@@ -8,7 +8,6 @@ violation_diagnostics(
   Z,
   X,
   Y,
-  Omega,
   lambda,
   L,
   nu,
@@ -24,8 +23,6 @@ violation_diagnostics(
 \item{X}{solution natural parameters}
 
 \item{Y}{list of binary masks}
-
-\item{Omega}{observed entry mask or NULL}
 
 \item{lambda}{shrinkage parameters}
 

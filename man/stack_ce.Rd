@@ -4,14 +4,12 @@
 \alias{stack_ce}
 \title{Stacked cross entropy over all masks}
 \usage{
-stack_ce(X, Y, Omega = NULL)
+stack_ce(X, Y)
 }
 \arguments{
 \item{X}{list of natural parameter matrices}
 
 \item{Y}{list of binary matrices}
-
-\item{Omega}{observed entry mask or NULL}
 }
 \value{
 the summed negative log likelihood

@@ -2,26 +2,20 @@
 % Please edit documentation in R/svt_utils.R
 \name{entry_loss}
 \alias{entry_loss}
-\title{Per-entry loss of a fitted mask stack, summed over thresholds}
+\title{Per-entry Brier loss of a fitted mask stack, summed over thresholds}
 \usage{
-entry_loss(X, Y, idx = NULL, loss = c("brier", "ce"))
+entry_loss(X, Y)
 }
 \arguments{
 \item{X}{list of T natural parameter matrices}
 
 \item{Y}{list of T binary matrices}
-
-\item{idx}{integer positions of the entries to score, in column major order,
-or NULL to score every entry}
-
-\item{loss}{\code{"brier"} for squared error on the probability scale, \code{"ce"} for
-cross entropy}
 }
 \value{
-a numeric vector, one element per scored entry
+a numeric vector, one element per entry
 }
 \description{
-Per-entry loss of a fitted mask stack, summed over thresholds
+Per-entry Brier loss of a fitted mask stack, summed over thresholds
 }
 \details{
 Hot kernel. One pass per mask with no allocation beyond the accumulator.

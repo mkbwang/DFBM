@@ -3,6 +3,7 @@
 export(bmfsvt)
 export(cv.logisticcfR)
 export(lambda_max_seq)
+export(lambda_star_seq)
 export(log1exp)
 export(logisticcfR)
 export(penalized_loss)
