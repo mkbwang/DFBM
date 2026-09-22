@@ -39,6 +39,18 @@
 #' @param clip whether to enforce the monotonicity restriction by clipping the
 #'   SVT outcome. Setting this to `FALSE` solves the unconstrained stacked
 #'   problem, which is useful as a reference for how hard the constraint binds.
+#' @param offset `"scalar"` uses one unpenalized offset per mask,
+#'   \eqn{\mu_t = \mathrm{logit}(\bar Y^{(t)})}, as in the method note.
+#'   `"column"` uses one per mask **and column**,
+#'   \eqn{\mu_{tj} = \mathrm{logit}(\bar Y^{(t)}_{\cdot j})}, so `mu` becomes a
+#'   T x P matrix and `nu` a (T-1) x P matrix. Use `"column"` whenever column
+#'   prevalences differ strongly: a column main effect is expensive for a
+#'   nuclear-norm penalized block to absorb, and on the HRS composition data the
+#'   scalar offsets fitted a column that is 49% nonzero at 0.81 on average. When
+#'   the masks come from per-column quantile thresholds the column prevalences
+#'   are identical except for zero-heavy columns, so the two settings then
+#'   coincide everywhere else. [lambda_star_seq()] and the Cp variance stay
+#'   pooled under either setting.
 #' @param L_init how to initialize the Lipschitz constants. `"stacked"` uses
 #'   \eqn{\sum_{t' \ge t} \pi_{t'}(1-\pi_{t'})}, `"single"` reproduces the
 #'   method note exactly with \eqn{\pi_t(1-\pi_t)}, `"worst"` uses the
@@ -61,7 +73,13 @@
 #'     \item{prob}{list of T matrices, \eqn{\sigma(X^{(t)})}, the estimated
 #'       marginal probability that an entry exceeds threshold t}
 #'     \item{Z}{list of T increment matrices actually optimized}
-#'     \item{mu, nu}{offsets and offset increments}
+#'     \item{mu, nu}{offsets and offset increments: vectors of length T and
+#'       T-1 under `offset = "scalar"`, T x P and (T-1) x P matrices under
+#'       `"column"`}
+#'     \item{offset}{which offset parameterization was used}
+#'     \item{V}{list of T `P x ranks[t]` matrices of right singular vectors
+#'       paired with `dvals`. Like `dvals` they describe the thresholded block
+#'       before clipping. Used by [predict.bmfsvt()] to fold in new rows.}
 #'     \item{lambda, L}{shrinkage parameters and final Lipschitz constants}
 #'     \item{ranks}{retained rank of each block}
 #'     \item{dvals}{retained singular values of each block after shrinkage, as
@@ -90,25 +108,30 @@
 #'
 #' A single mask (`T = 1`) reduces this to Algorithm 1.
 #'
+#' The returned object has class `"bmfsvt"`.
+#'
 #' @seealso [tune.bmfsvt()] for choosing `alpha`, [lambda_star_seq()] for the
-#'   shrinkage scale.
+#'   shrinkage scale, [predict.bmfsvt()] for new rows.
 #' @importFrom stats plogis qlogis
 #' @export
 bmfsvt <- function(Y, lambda = NULL, alpha = 0.55, C = 20L,
                    max_iter = 200L, tol = 1e-5, gamma = 1.1, L_rewind = gamma,
                    delta = 1e-6,
                    rank_init = 5L, rank_max = NULL, rank_step = 2L,
-                   clip = TRUE,
+                   clip = TRUE, offset = c("scalar", "column"),
                    L_init = c("stacked", "single", "worst"),
                    restart = c("gradient", "function", "none"),
                    svd_method = c("auto", "full", "svds"),
                    track_objective = c("approx", "exact", "none"),
                    Z_init = NULL, max_backtrack = 30L, verbose = FALSE) {
 
+  offset <- match.arg(offset)
   L_init <- match.arg(L_init)
   restart <- match.arg(restart)
   svd_method <- match.arg(svd_method)
   track_objective <- match.arg(track_objective)
+  # With no iteration the returned increments would carry no singular vectors.
+  if (max_iter < 1L) stop("`max_iter` must be at least 1.")
 
   Y <- as_mask_list(Y, check_nested = TRUE)
   Tn <- length(Y)
@@ -123,8 +146,19 @@ bmfsvt <- function(Y, lambda = NULL, alpha = 0.55, C = 20L,
     warning("some masks are entirely 0 or entirely 1; their offsets are clamped.")
   }
   pis <- pmin(pmax(pis, eps), 1 - eps)
-  mu <- stats::qlogis(pis)
-  nu <- if (Tn > 1L) diff(mu) else numeric(0L)
+  if (offset == "scalar") {
+    mu <- stats::qlogis(pis)
+    nu <- if (Tn > 1L) diff(mu) else numeric(0L)
+  } else {
+    # Column prevalences are non-increasing in t because the masks are nested,
+    # and clamping preserves the order, so nu <= 0 still holds entrywise.
+    eps_col <- 1 / (2 * N)
+    pic <- matrix(vapply(Y, colMeans, numeric(P)), P, Tn)
+    pic <- pmin(pmax(pic, eps_col), 1 - eps_col)
+    mu <- t(stats::qlogis(pic))
+    dimnames(mu) <- NULL
+    nu <- mu[-1L, , drop = FALSE] - mu[-Tn, , drop = FALSE]
+  }
 
   L <- switch(
     L_init,
@@ -157,10 +191,12 @@ bmfsvt <- function(Y, lambda = NULL, alpha = 0.55, C = 20L,
     })
   }
   W <- Z
-  X <- stack_forward(W, mu[1L], nu)
+  mu0 <- offset_head(mu)
+  X <- stack_forward(W, mu0, nu)
   ranks <- rep(as.integer(rank_init), Tn)
   retained <- rep(NA_integer_, Tn)
   dvals <- replicate(Tn, numeric(0L), simplify = FALSE)
+  Vs <- replicate(Tn, matrix(0, P, 0L), simplify = FALSE)
   s_curr <- 1
 
   obj_trace <- numeric(0L)
@@ -186,6 +222,9 @@ bmfsvt <- function(Y, lambda = NULL, alpha = 0.55, C = 20L,
     repeat {
       Zp <- vector("list", Tn)
       dvals <- vector("list", Tn)
+      # Reset alongside dvals so that V always pairs with the accepted step,
+      # whichever way the loop exits.
+      Vs <- vector("list", Tn)
       new_ranks <- ranks
       retained <- integer(Tn)
       n_clipped <- 0L
@@ -198,15 +237,23 @@ bmfsvt <- function(Y, lambda = NULL, alpha = 0.55, C = 20L,
         retained[t] <- svt$rank
         mat <- svt$mat
         dvals[[t]] <- svt$d
+        Vs[[t]] <- svt$v
         if (clip && t > 1L) {
-          viol <- mat > clip_level[t - 1L]
+          level <- if (is.matrix(clip_level)) {
+            rep(clip_level[t - 1L, ], each = N)
+          } else {
+            clip_level[t - 1L]
+          }
+          viol <- mat > level
           n_clipped <- n_clipped + sum(viol)
-          if (any(viol)) mat[viol] <- clip_level[t - 1L]
+          if (any(viol)) {
+            mat[viol] <- if (length(level) > 1L) level[viol] else level
+          }
         }
         Zp[[t]] <- mat
       }
 
-      Xp <- stack_forward(Zp, mu[1L], nu)
+      Xp <- stack_forward(Zp, mu0, nu)
       f_new <- stack_ce(Xp, Y)
 
       # Q(Z' | W) = f(X_W) + <Z' - W, Psi> + sum_t L_t/2 ||Z'^(t) - W^(t)||_F^2
@@ -286,29 +333,42 @@ bmfsvt <- function(Y, lambda = NULL, alpha = 0.55, C = 20L,
     }
     s_curr <- s_next
     Z <- Zp
-    X <- stack_forward(W, mu[1L], nu)
+    X <- stack_forward(W, mu0, nu)
   }
 
-  if (!converged) X <- stack_forward(Z, mu[1L], nu)
+  if (!converged) X <- stack_forward(Z, mu0, nu)
 
   # ---- constraint diagnostics (lines 58-63) --------------------------------
   diag_bd <- violation_diagnostics(Z, X, Y, lambda, L, nu, ranks,
                                    rank_max, rank_step, svd_method)
 
-  list(X = X,
-       prob = lapply(X, sigmoid),
-       Z = Z,
-       mu = mu, nu = nu, pi = pis,
-       lambda = lambda, L = L,
-       ranks = retained,
-       rank_guess = ranks,
-       dvals = dvals,
-       b = diag_bd$b, d = diag_bd$d,
-       obj_trace = obj_trace,
-       clip_frac_trace = clip_frac_trace,
-       n_iter = m, n_svd = n_svd, n_backtrack = n_backtrack,
-       converged = converged,
-       clip = clip)
+  structure(
+    list(X = X,
+         prob = lapply(X, sigmoid),
+         Z = Z,
+         mu = mu, nu = nu, pi = pis, offset = offset,
+         lambda = lambda, L = L,
+         ranks = retained,
+         rank_guess = ranks,
+         dvals = dvals,
+         V = Vs,
+         b = diag_bd$b, d = diag_bd$d,
+         obj_trace = obj_trace,
+         clip_frac_trace = clip_frac_trace,
+         n_iter = m, n_svd = n_svd, n_backtrack = n_backtrack,
+         converged = converged,
+         clip = clip),
+    class = "bmfsvt")
+}
+
+
+#' Offset of the first mask
+#'
+#' @param mu offsets, a vector of length T or a T x P matrix
+#' @returns `mu[1]`, or the first row of `mu` for column offsets
+#' @keywords internal
+offset_head <- function(mu) {
+  if (is.matrix(mu)) mu[1L, ] else mu[1L]
 }
 
 
@@ -390,12 +450,239 @@ violation_diagnostics <- function(Z, X, Y, lambda, L, nu, ranks,
     svt <- soft_svt(Z[[t]] - Psi[[t]] / L[t], thresh = lambda[t] / L[t],
                     rank_guess = ranks[t], rank_max = rank_max,
                     rank_step = rank_step, method = svd_method)
-    margin <- svt$mat + nu[t - 1L]
+    nu_t <- if (is.matrix(nu)) rep(nu[t - 1L, ], each = nrow(Z[[t]])) else
+      nu[t - 1L]
+    margin <- svt$mat + nu_t
     b[t - 1L] <- sum(margin > 0) / nobs
     d[t - 1L] <- max(0, max(margin))
   }
   names(b) <- names(d) <- paste0("t", seq.int(1L, Tn - 1L))
   list(b = b, d = d)
+}
+
+
+#' Balanced right factors of the fitted blocks
+#'
+#' @param V list of T `P x r_t` right singular vector matrices, as in `fit$V`
+#' @param dvals list of T shrunken singular value vectors, as in `fit$dvals`
+#' @returns list of T `P x r_t` matrices \eqn{B_t = V_t D_t^{1/2}}
+#' @details
+#' The square root is not a normalization choice. The nuclear norm has the
+#' variational form \eqn{\|Z\|_* = \min_{Z = AB'} (\|A\|_F^2 + \|B\|_F^2)/2},
+#' attained only at the balanced split \eqn{A = UD^{1/2}}, \eqn{B = VD^{1/2}}.
+#' Only with that `B` is a plain ridge on a new row's scores that row's share of
+#' the nuclear norm penalty. With \eqn{B = VD} the same ridge would shrink weak
+#' components harder than strong ones; folding the training rows back in that
+#' way was measured to miss the fit by 11.7 on the logit scale.
+#'
+#' Built with `rep(each = )` rather than `diag()`, which for a single component
+#' returns an identity matrix of size `floor(sqrt(d))` instead.
+#' @keywords internal
+factor_blocks <- function(V, dvals) {
+  lapply(seq_along(V), function(t) {
+    V[[t]] * rep(sqrt(dvals[[t]]), each = nrow(V[[t]]))
+  })
+}
+
+
+#' Ridge fold-in of new rows against fixed right factors
+#'
+#' @param Y list of T binary n x P masks for the new rows
+#' @param B list of T `P x r_t` balanced right factors, see [factor_blocks()]
+#' @param mu0 offset of the first mask, scalar or length P
+#' @param nu offset increments, vector of length T-1 or (T-1) x P matrix
+#' @param lambda the training shrinkage parameters, length T
+#' @param tol a row stops once the Euclidean norm of its own gradient falls
+#'   below this
+#' @param max_iter maximum number of iterations
+#' @returns a list with the scores `A` (list of T `n x r_t` matrices), the
+#'   unclipped increments `Z` (list of T n x P matrices), and per row
+#'   `grad_norm`, `n_iter` and `converged`
+#' @details
+#' Solves, for the new rows only,
+#' \deqn{\min_{A_1..A_T} \sum_t \mathrm{CE}(X^{(t)}; Y^{(t)}) +
+#'   \sum_t \frac{\lambda_t}{2}\|A_t\|_F^2, \qquad
+#'   X^{(t)} = \mu_t + \sum_{t' \le t} A_{t'} B_{t'}^\top,}
+#' whose gradient is \eqn{\Psi_t B_t + \lambda_t A_t} with \eqn{\Psi} from
+#' [grad_backward()]. The problem separates by row and is strongly convex.
+#'
+#' **Step size.** The Hessian block for the pair (t, s) is
+#' \eqn{B_t^\top \mathrm{diag}(\sum_{t' \ge \max(s,t)} w_{t'}) B_s} with
+#' \eqn{w \le 1/4}, so its norm is at most
+#' \eqn{(T - \max(s,t) + 1)/4 \cdot \sqrt{d_{t,1} d_{s,1}}}. Summing over s gives a
+#' block Lipschitz constant \eqn{L_t} valid for every row at every iterate, so
+#' no backtracking is needed; the step is \eqn{1/(L_t + \lambda_t)}.
+#'
+#' **Each row is solved independently.** Momentum and restarts are kept per
+#' row, and a row is frozen at the iterate where its own gradient norm first
+#' drops below `tol`. The answer for a row therefore does not depend on which
+#' other rows share the batch; batching is only for speed.
+#' @keywords internal
+foldin_rows <- function(Y, B, mu0, nu, lambda, tol = 1e-6, max_iter = 2000L) {
+  Tn <- length(Y)
+  n <- nrow(Y[[1L]])
+  ranks <- vapply(B, ncol, integer(1L))
+  tt <- seq_len(Tn)
+
+  # ||B_t||_2^2 is the largest shrunken singular value, since V is orthonormal.
+  nb <- vapply(B, function(b) if (ncol(b) == 0L) 0 else sqrt(max(colSums(b^2))),
+               numeric(1L))
+  weight <- outer(tt, tt, function(s, t) (Tn - pmax(s, t) + 1) / 4)
+  L <- pmax(rowSums(weight * outer(nb, nb)), 1e-8)
+  step <- 1 / (L + lambda)
+
+  A_out <- lapply(ranks, function(r) matrix(0, n, r))
+  grad_norm <- rep(NA_real_, n)
+  n_iter <- rep(as.integer(max_iter), n)
+  converged <- logical(n)
+
+  rows <- seq_len(n)
+  Yw <- Y
+  A <- lapply(ranks, function(r) matrix(0, n, r))
+  W <- A
+  s <- rep(1, n)
+  gn <- rep(NA_real_, n)
+
+  for (m in seq_len(max_iter)) {
+    Zw <- lapply(tt, function(t) tcrossprod(W[[t]], B[[t]]))
+    Psi <- grad_backward(stack_forward(Zw, mu0, nu), Yw)
+    G <- lapply(tt, function(t) Psi[[t]] %*% B[[t]] + lambda[t] * W[[t]])
+    gn <- sqrt(Reduce(`+`, lapply(G, function(g) rowSums(g^2))))
+
+    done <- gn < tol
+    if (any(done)) {
+      idx <- rows[done]
+      for (t in tt) {
+        if (ranks[t] > 0L) A_out[[t]][idx, ] <- W[[t]][done, , drop = FALSE]
+      }
+      grad_norm[idx] <- gn[done]
+      n_iter[idx] <- m - 1L
+      converged[idx] <- TRUE
+      keep <- !done
+      rows <- rows[keep]
+      if (length(rows) == 0L) break
+      Yw <- lapply(Yw, function(y) y[keep, , drop = FALSE])
+      A <- lapply(A, function(a) a[keep, , drop = FALSE])
+      W <- lapply(W, function(w) w[keep, , drop = FALSE])
+      G <- lapply(G, function(g) g[keep, , drop = FALSE])
+      s <- s[keep]
+      gn <- gn[keep]
+    }
+
+    A_new <- lapply(tt, function(t) W[[t]] - step[t] * G[[t]])
+    # Gradient restart, per row: drop the momentum of any row whose step moved
+    # against its proximal direction.
+    ip <- Reduce(`+`, lapply(tt, function(t) {
+      rowSums((W[[t]] - A_new[[t]]) * (A_new[[t]] - A[[t]]))
+    }))
+    s_next <- (1 + sqrt(1 + 4 * s^2)) / 2
+    fac <- (s - 1) / s_next
+    restart <- ip > 0
+    fac[restart] <- 0
+    s_next[restart] <- 1
+    # `fac` has one element per row, so recycling it down the columns of an
+    # n x r matrix scales each row by its own factor.
+    W <- lapply(tt, function(t) A_new[[t]] + fac * (A_new[[t]] - A[[t]]))
+    A <- A_new
+    s <- s_next
+  }
+
+  if (length(rows) > 0L) {
+    for (t in tt) {
+      if (ranks[t] > 0L) A_out[[t]][rows, ] <- A[[t]]
+    }
+    grad_norm[rows] <- gn
+    warning(sprintf(
+      "fold-in did not reach `tol` for %d of %d rows within %d iterations.",
+      length(rows), n, max_iter))
+  }
+
+  Z <- lapply(tt, function(t) tcrossprod(A_out[[t]], B[[t]]))
+  list(A = A_out, Z = Z, grad_norm = grad_norm, n_iter = n_iter,
+       converged = converged)
+}
+
+
+#' Denoise new rows with a fitted factorization
+#'
+#' @param object a fit from [bmfsvt()], e.g. `tune.bmfsvt(...)$fit`
+#' @param newdata a list of T binary n x P matrices or an n x P x T array. The
+#'   masks must be built with the **training** thresholds, so that mask t means
+#'   the same event it meant when `object` was fitted.
+#' @param tol per-row gradient norm at which a row stops
+#' @param max_iter maximum number of fold-in iterations
+#' @param ... unused
+#'
+#' @returns a list with components
+#'   \describe{
+#'     \item{prob}{list of T n x P matrices, the estimated
+#'       \eqn{P(\text{value} > d_t)} for each new entry}
+#'     \item{X, Z}{natural parameters and (clipped) increments}
+#'     \item{A}{list of T `n x r_t` row score matrices}
+#'     \item{row_ce}{mean cross entropy of each row's fitted probabilities
+#'       against its own masks, a per-row misfit diagnostic}
+#'     \item{grad_norm, n_iter, converged}{per-row solver diagnostics}
+#'   }
+#'
+#' @details
+#' Every training quantity is held fixed: the offsets `mu` and `nu`, the
+#' shrinkage `lambda`, and the right factors \eqn{B_t = V_t D_t^{1/2}}. Only the
+#' new rows' scores are solved for, by the ridge problem in [foldin_rows()].
+#' Nothing is shared across new rows, so each is denoised on its own, the way a
+#' principal component projection treats a new sample.
+#'
+#' **Why this is the fit's own map.** With \eqn{B} fixed the training problem
+#' separates by row, and the stationarity condition of each row's ridge problem,
+#' \eqn{\Psi_t V_t = -\lambda_t U_t}, is exactly the nuclear norm optimality
+#' condition. Folding the training rows back into an unclipped fit therefore
+#' reproduces `fit$X` up to solver tolerance. Under squared error loss the same
+#' construction has the closed form \eqn{c_r = d_r/(d_r + \lambda)(V^\top x)_r}:
+#' project onto `V`, then shrink each component. Logistic loss has no closed
+#' form, hence the iterative solve.
+#'
+#' **Clipping is applied after solving, not during.** When `object` was fitted
+#' with `clip = TRUE`, the increments are capped at \eqn{-\nu_t} once the ridge
+#' problem is solved. Clipping inside the iterations would make each row's
+#' problem non-convex. The in-sample fit clips inside its iterations, so on
+#' training rows the two differ slightly (3.5e-5 mean absolute probability on
+#' the HRS data).
+#'
+#' **What the fold-in cannot do.** A row can only be expressed through the
+#' column patterns in `V`, which are shared across the training population. An
+#' idiosyncratic profile carried by one sample is not represented; see the
+#' flagging in [dfbm()].
+#' @importFrom stats predict
+#' @export
+predict.bmfsvt <- function(object, newdata, tol = 1e-6, max_iter = 2000L, ...) {
+  if (is.null(object$V)) {
+    stop("`object` stores no singular vectors; refit it with the current bmfsvt().")
+  }
+  Y <- as_mask_list(newdata, check_nested = TRUE)
+  Tn <- length(object$V)
+  P <- nrow(object$V[[1L]])
+  if (length(Y) != Tn) {
+    stop(sprintf("`newdata` has %d masks but the fit has %d.", length(Y), Tn))
+  }
+  if (ncol(Y[[1L]]) != P) {
+    stop(sprintf("`newdata` has %d columns but the fit has %d.",
+                 ncol(Y[[1L]]), P))
+  }
+
+  mu0 <- offset_head(object$mu)
+  B <- factor_blocks(object$V, object$dvals)
+  sol <- foldin_rows(Y, B, mu0, object$nu, object$lambda,
+                     tol = tol, max_iter = max_iter)
+  Z <- if (isTRUE(object$clip)) clip_increments(sol$Z, object$nu) else sol$Z
+  X <- stack_forward(Z, mu0, object$nu)
+
+  ce <- Reduce(`+`, lapply(seq_len(Tn), function(t) {
+    rowSums(log1exp(X[[t]]) - Y[[t]] * X[[t]])
+  }))
+
+  list(prob = lapply(X, sigmoid), X = X, Z = Z, A = sol$A,
+       row_ce = ce / (Tn * P),
+       grad_norm = sol$grad_norm, n_iter = sol$n_iter,
+       converged = sol$converged)
 }
 
 
@@ -501,7 +788,7 @@ bmfsvt_path <- function(Y, alpha_grid, C = 20L, seed = NULL, ...) {
 #' @returns a list of T probability matrices
 #' @keywords internal
 path_prob <- function(path, k) {
-  lapply(stack_forward(path$Z[[k]], path$mu[1L], path$nu), sigmoid)
+  lapply(stack_forward(path$Z[[k]], offset_head(path$mu), path$nu), sigmoid)
 }
 
 

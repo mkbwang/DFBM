@@ -1,0 +1,374 @@
+---
+title: "Clip-SVT versus conditional logistic collaborative filtering"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+params:
+  config: "quick"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.width = 9, fig.height = 5, dpi = 110)
+# `params` only exists under rmarkdown::render. Defining a fallback lets the
+# same file be knitted to markdown with knitr::knit when pandoc is unavailable,
+# which is the case on machines without RStudio.
+if (!exists("params")) {
+  params <- list(config = Sys.getenv("EXP_CONFIG", "quick"))
+}
+library(ggplot2)
+library(dplyr)
+theme_set(theme_bw(base_size = 11))
+
+res <- function(stem) {
+  f <- file.path("results", sprintf("%s_%s.rds", stem, params$config))
+  if (!file.exists(f)) return(NULL)
+  readRDS(f)
+}
+
+method_labs <- c(baseline = "intercept only", old = "old (conditional LCF)",
+                 new_cp = "new (Clip-SVT, Cp)",
+                 new_boot = "new (Clip-SVT, Brier+cov)",
+                 new_fixed = "new (Clip-SVT, fixed alpha)",
+                 new_tuned = "new (Clip-SVT, tuned alpha)",
+                 new = "new (Clip-SVT)")
+pal <- c("intercept only" = "grey55", "old (conditional LCF)" = "#C2453E",
+         "new (Clip-SVT, Cp)" = "#3A6FB0",
+         "new (Clip-SVT, Brier+cov)" = "#2E8B72",
+         "new (Clip-SVT, fixed alpha)" = "#3A6FB0",
+         "new (Clip-SVT, tuned alpha)" = "#2E8B72",
+         "new (Clip-SVT)" = "#3A6FB0")
+lab <- function(x) factor(method_labs[x], levels = names(pal))
+```
+
+Config: **`r params$config`**.
+
+Both methods are scored on the same estimand, the marginal survival
+$S^{(t)} = P(\text{value} > d_t)$. The old method estimates conditional
+probabilities and multiplies them up; the new method estimates
+$\sigma(X^{(t)})$ directly. The intercept-only fit is shown throughout as the
+floor that any factorization has to beat.
+
+# 1. Accuracy
+
+```{r accuracy-load}
+acc <- res("accuracy")
+```
+
+```{r accuracy-overall, eval = !is.null(acc)}
+overall <- acc$summary %>%
+  filter(is.na(t)) %>%
+  mutate(method = lab(fit_name))
+
+overall %>%
+  group_by(method, shape, pi_tail) %>%
+  summarise(rmse = mean(rmse), cross_entropy = mean(cross_entropy),
+            auc = mean(auc, na.rm = TRUE), secs = mean(elapsed),
+            .groups = "drop") %>%
+  arrange(shape, pi_tail, rmse)
+```
+
+## Error against the truth, by tail sparsity
+
+The design axis that isolates the mechanism. Lower `pi_tail` means the last
+mask is sparser, so the old method's conditional risk set is more starved.
+
+```{r accuracy-tail, eval = !is.null(acc)}
+ggplot(overall, aes(factor(pi_tail), rmse, fill = method)) +
+  geom_boxplot(outlier.size = 0.6, position = position_dodge(0.8)) +
+  facet_wrap(~ shape, scales = "free_y") +
+  scale_fill_manual(values = pal) +
+  labs(x = "prevalence of the last mask", y = "RMSE of estimated survival",
+       fill = NULL) +
+  theme(legend.position = "bottom")
+```
+
+## Error by threshold
+
+```{r accuracy-by-t, eval = !is.null(acc)}
+acc$summary %>%
+  filter(!is.na(t)) %>%
+  mutate(method = lab(fit_name)) %>%
+  group_by(method, t, Tn, pi_tail) %>%
+  summarise(rmse = mean(rmse), .groups = "drop") %>%
+  ggplot(aes(t, rmse, colour = method)) +
+  geom_line(linewidth = 0.7) + geom_point(size = 1.2) +
+  facet_grid(pi_tail ~ Tn, scales = "free", labeller = label_both) +
+  scale_colour_manual(values = pal) +
+  labs(x = "threshold index t", y = "RMSE", colour = NULL) +
+  theme(legend.position = "bottom")
+```
+
+The engines tie at `t = 1`, where they see identical information, and separate
+as the old method's conditioning compounds across thresholds.
+
+## Calibration and monotonicity
+
+```{r accuracy-cal, eval = !is.null(acc)}
+acc$summary %>%
+  filter(!is.na(t)) %>%
+  mutate(method = lab(fit_name)) %>%
+  group_by(method) %>%
+  summarise(`calibration slope` = mean(cal_slope, na.rm = TRUE),
+            `calibration intercept` = mean(cal_intercept, na.rm = TRUE),
+            `monotonicity violations` = mean(mono_violation),
+            .groups = "drop")
+```
+
+## Error by threshold: new versus old
+
+The per binary mask comparison, scored as squared error against the **true**
+survival probabilities. Selection no longer holds entries out, so the Brier
+score against the observed `Y` would now be in sample -- and the new engine fits
+`Y` better in sample by construction, because it retains more rank. Scoring
+against the truth needs no split and is immune to that.
+
+```{r accuracy-brier-by-t, eval = !is.null(acc)}
+acc$summary %>%
+  filter(!is.na(t)) %>%
+  mutate(method = lab(fit_name)) %>%
+  group_by(method, t, shape) %>%
+  summarise(sq_err = mean(rmse^2), .groups = "drop") %>%
+  ggplot(aes(t, sq_err, colour = method)) +
+  geom_line(linewidth = 0.7) + geom_point(size = 1.2) +
+  facet_wrap(~ shape, scales = "free_y") +
+  scale_colour_manual(values = pal) +
+  labs(x = "threshold index t",
+       y = expression(mean((hat(pi) - S[true])^2)), colour = NULL) +
+  theme(legend.position = "bottom")
+```
+
+```{r accuracy-brier-tab, eval = !is.null(acc)}
+acc$summary %>%
+  filter(!is.na(t)) %>%
+  mutate(method = lab(fit_name)) %>%
+  group_by(method, t) %>%
+  summarise(sq_err = mean(rmse^2), .groups = "drop") %>%
+  tidyr::pivot_wider(names_from = method, values_from = sq_err)
+```
+
+## Paired comparison against the old engine
+
+Within a `rep` the seed is a function of the design, so every engine sees the
+same simulated data. Differences are therefore **paired**, which is both the
+right test and far more powerful than comparing two marginal means. Negative
+`d_rmse` means the new method is more accurate; negative `d_secs` means faster.
+
+**Read `p_t`, not `p_wilcox`.** With `n` replicates the signed rank test's
+smallest attainable two sided p is `2 / 2^n` -- 0.0625 at `n = 5`. A `p_wilcox`
+of 0.0625 therefore means *every* pair favoured one side and the test has
+saturated; it is the strongest evidence that test can give at this `n`, not weak
+evidence. `wins_rmse` out of `n` is the honest non-parametric summary.
+
+```{r accuracy-paired, eval = !is.null(acc)}
+wide <- acc$summary %>%
+  filter(is.na(t)) %>%
+  select(shape, rep, fit_name, rmse, elapsed) %>%
+  tidyr::pivot_wider(names_from = fit_name, values_from = c(rmse, elapsed))
+
+paired <- function(new) {
+  d_r <- wide[[paste0("rmse_", new)]] - wide$rmse_old
+  d_s <- wide[[paste0("elapsed_", new)]] - wide$elapsed_old
+  data.frame(
+    arm = new, shape = wide$shape, d_rmse = d_r, d_secs = d_s)
+}
+# `new_boot` is absent whenever cfg$selection$do_boot is FALSE, which is the
+# default now, so take whichever tuned arms the run actually produced.
+arms <- intersect(c("new_cp", "new_boot"),
+                  sub("^rmse_", "", grep("^rmse_", names(wide), value = TRUE)))
+pd <- do.call(rbind, lapply(arms, paired))
+
+# NOTE: summarise() evaluates its arguments in order and each one sees the
+# results of the previous ones. Naming an output `d_rmse` while later arguments
+# still need the *column* `d_rmse` silently replaces the vector with its own
+# mean, so sd() returns NA and sum(< 0) returns 1. Every summary here therefore
+# gets a name distinct from the columns it reads.
+pd %>%
+  group_by(arm, shape) %>%
+  summarise(n = dplyr::n(),
+            mean_d_rmse = mean(d_rmse), se_rmse = sd(d_rmse) / sqrt(dplyr::n()),
+            wins_rmse = sum(d_rmse < 0),
+            mean_d_secs = mean(d_secs), se_secs = sd(d_secs) / sqrt(dplyr::n()),
+            wins_secs = sum(d_secs < 0),
+            p_wilcox = tryCatch(
+              stats::wilcox.test(d_rmse)$p.value, error = function(e) NA_real_),
+            p_t = tryCatch(
+              stats::t.test(d_rmse)$p.value, error = function(e) NA_real_),
+            .groups = "drop") %>%
+  as.data.frame()
+```
+
+# 1b. Choosing alpha
+
+Two criteria, both scored against an `oracle`: the grid alpha minimising RMSE
+against the true survival probabilities. That reference exists only in
+simulation, which is why this lives here. The held out rule that used to be
+stage 1 is gone -- selection no longer splits entries.
+
+`cp_note_asis` and `cp_hard_df` are controls, not candidates. They are the
+Mallows Cp surrogate without the two corrections it needs -- a variance
+re-estimated at every alpha, and a hard parameter count that ignores how much
+soft thresholding shrank what it retained.
+
+```{r selection-load}
+sel <- acc$selection
+selp <- acc$sel_path
+selr <- acc$sel_ranks
+stab <- acc$sel_stability
+```
+
+```{r selection-table, eval = !is.null(sel)}
+sel %>%
+  group_by(stage) %>%
+  summarise(`signed k - oracle` = mean(k_minus_oracle),
+            `|k - oracle|` = mean(abs_k_minus_oracle),
+            `exact hits %` = 100 * mean(k_minus_oracle == 0),
+            rmse = mean(rmse_all),
+            `excess rmse` = mean(excess_rmse),
+            secs = mean(elapsed),
+            .groups = "drop") %>%
+  arrange(`|k - oracle|`)
+```
+
+## Why the surrogate needs its two corrections
+
+`v_tilde` is the mean Bernoulli variance of the fitted probabilities. As the
+shrinkage weakens the fit drives them toward 0 and 1, so a variance re-estimated
+per alpha collapses exactly where the degrees of freedom explode, and the
+penalty it multiplies vanishes with it.
+
+```{r selection-vtilde, eval = !is.null(selp)}
+selp %>%
+  group_by(k, alpha) %>%
+  summarise(v_tilde = mean(v_tilde), df = mean(df), df_hard = mean(df_hard),
+            .groups = "drop") %>%
+  tidyr::pivot_longer(c(v_tilde, df, df_hard)) %>%
+  ggplot(aes(alpha, value)) +
+  geom_line(linewidth = 0.7) + geom_point(size = 1.2) +
+  scale_x_log10() +
+  facet_wrap(~ name, scales = "free_y") +
+  labs(x = "alpha", y = NULL)
+```
+
+## Rank recovery, per threshold
+
+The direct answer to whether the right rank is being chosen. Note the caveat:
+soft thresholding biases retained singular values downward, so the alpha that
+minimises estimation error keeps *more* components than the truth. A stage can
+recover the rank better while estimating worse, which is why the table above is
+reported beside this.
+
+```{r selection-ranks, eval = !is.null(selr)}
+selr %>%
+  group_by(stage, t) %>%
+  summarise(fitted = mean(rank_fit), truth = mean(rank_true), .groups = "drop") %>%
+  ggplot(aes(t, fitted, colour = stage)) +
+  geom_line(linewidth = 0.7) + geom_point(size = 1.2) +
+  geom_line(aes(y = truth), colour = "black", linetype = 2, linewidth = 0.6) +
+  labs(x = "threshold index t", y = "retained rank (dashed = truth)",
+       colour = NULL) +
+  theme(legend.position = "bottom")
+```
+
+```{r selection-rank-tab, eval = !is.null(sel)}
+sel %>%
+  group_by(stage) %>%
+  summarise(`mean fitted rank` = mean(mean_rank),
+            `mean true rank` = mean(mean_true_rank),
+            `mean signed error` = mean(rank_err),
+            `mean |error|` = mean(abs_rank_err), .groups = "drop") %>%
+  arrange(`mean |error|`)
+```
+
+## The criterion along the path
+
+```{r selection-path, eval = !is.null(selp)}
+selp %>%
+  group_by(k, alpha) %>%
+  summarise(rmse_all = mean(rmse_all), .groups = "drop") %>%
+  ggplot(aes(alpha, rmse_all)) +
+  geom_line(linewidth = 0.7) + geom_point(size = 1.2) +
+  scale_x_log10() +
+  labs(x = "alpha", y = "RMSE against the truth, all entries")
+```
+
+## Does the bootstrap answer depend on where it was anchored?
+
+The resample is drawn from the fit at the anchor, so an over-smoothed anchor
+carries more Bernoulli variance than the truth does. Every candidate then chases
+more noise than it really would, the weakly shrunk ones most of all. If that
+matters, moving the anchor moves the winner.
+
+```{r selection-stability, eval = !is.null(stab)}
+stab %>%
+  group_by(anchor, k) %>%
+  summarise(M = mean(M), .groups = "drop") %>%
+  ggplot(aes(k, M, colour = factor(anchor))) +
+  geom_line(linewidth = 0.7) + geom_point(size = 1.2) +
+  labs(x = "candidate k", y = "M(alpha)", colour = "anchor k")
+```
+
+```{r selection-stability-tab, eval = !is.null(stab)}
+stab %>%
+  distinct(shape, Tn, pi_tail, rep, anchor, argmin) %>%
+  count(anchor, argmin, name = "cells")
+```
+
+## Arithmetic versus parallel scaling
+
+Stage 01 times both engines at the same `ncores`, which is the wall clock you
+would see. That conflates two things: how much work an algorithm does, and how
+well that work spreads across cores. The two differ by construction -- the
+bootstrap has `B` independent replicates, `cv.logisticcfR` only
+`length(lambdas)` fits per rank level -- so the same table at `ncores = 1`
+separates them. `speedup` is the serial time over the parallel time.
+
+Two things to read carefully here.
+
+**`new_cp` does not use `ncores` at all.** `ncores` reaches only
+`boot_covariance()`; `bmfsvt_path()` is serial. Its `speedup` column is
+therefore pure run to run noise, and it is large (about 1.4x), which sets the
+precision of every single-shot timing on this page. The five-replicate means in
+stage 01 are the numbers to quote, not these.
+
+**The old engine gains nothing from cores**, which is what makes stage 01's
+equal-`ncores` comparison fair rather than generous. Spreading three lambdas per
+rank level does not repay the fork, and on the square shape it is *slower* with
+eight cores than with one.
+
+```{r serial-timing, eval = !is.null(res("serial_timing"))}
+st <- res("serial_timing")
+st %>%
+  tidyr::pivot_longer(dplyr::any_of(c("old", "new_cp", "new_boot")),
+                      names_to = "arm", values_to = "secs") %>%
+  tidyr::pivot_wider(names_from = ncores, values_from = secs,
+                     names_prefix = "cores_") %>%
+  mutate(speedup = .data[[grep("^cores_", names(.), value = TRUE)[1]]] /
+                   .data[[grep("^cores_", names(.), value = TRUE)[2]]]) %>%
+  arrange(shape, arm) %>%
+  as.data.frame()
+```
+
+---
+
+## Retired stages
+
+`02_timing.R`, `03_constraint.R` and `05_merge.R` were removed; the suite is now
+`01_accuracy.R` -> `04_render.R`, with `06_serial_timing.R` as an optional
+check. Both retired stages had reached a settled answer, recorded here so the
+result outlives the code (recoverable with `git log --diff-filter=D`):
+
+- **The clipping heuristic is sufficient; ADMM is not needed.** Against an exact
+  CVXR solve of the constrained program the two agreed to within an optimization
+  error far smaller than the statistical error the method makes anyway. `b` and
+  `d` from Algorithm 2 measure constraint *activity*, not heuristic failure --
+  at a constrained optimum the unconstrained gradient step must leave the
+  feasible set, so they take nearly the same values at an exact solution. Do not
+  threshold them to judge the clipping; compare against an exact solve.
+- **An RcppArmadillo port of the elementwise kernels is worth doing.** Profiled
+  at 800 x 200 with `T = 10` *after* the `soft_svt()` rework: SVD 40%,
+  elementwise kernels 47%, other 13%. Before that rework the split was 65% / 27%
+  and argued the other way, so re-profile after any change to the decomposition
+  path before revisiting.

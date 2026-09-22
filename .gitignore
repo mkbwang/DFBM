@@ -16,3 +16,5 @@ python_archive/
 *.jpg
 references/
 CLAUDE.md
+*.html
+*.md

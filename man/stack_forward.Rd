@@ -9,9 +9,11 @@ stack_forward(Z, mu0, nu)
 \arguments{
 \item{Z}{list of T increment matrices}
 
-\item{mu0}{scalar offset of the first mask}
+\item{mu0}{offset of the first mask: a scalar, or a vector of length P
+holding one offset per column}
 
-\item{nu}{numeric vector of length T-1 holding the offsets of masks 1..T-1}
+\item{nu}{offset increments of masks 2..T: a numeric vector of length T-1, or
+a (T-1) x P matrix holding one increment per column}
 }
 \value{
 list of T matrices \eqn{X^{(t)} = \mu_t + \sum_{t' \le t} Z^{(t')}}
@@ -22,5 +24,8 @@ Accumulate the natural parameter stack from the increments
 \details{
 Hot kernel. Uses the telescoping identity \eqn{\mu_0 + \sum_{t'=1}^{t}\nu_{t'}
 = \mu_t} so only a running sum is needed.
+
+Column offsets are broadcast with \code{rep(x, each = n)}. Plain recycling of a
+length-P vector against an n x P matrix runs down the rows, which is wrong.
 }
 \keyword{internal}

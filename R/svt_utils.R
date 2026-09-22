@@ -46,7 +46,10 @@ sigmoid <- function(x) {
 #' @keywords internal
 as_mask_list <- function(Y, check_nested = TRUE) {
   if (is.array(Y) && length(dim(Y)) == 3L) {
-    Y <- lapply(seq_len(dim(Y)[3L]), function(t) Y[, , t, drop = TRUE])
+    # Rebuild the matrix explicitly: `drop = TRUE` would turn a 1 x P x T array
+    # (a single new sample) into plain vectors.
+    Y <- lapply(seq_len(dim(Y)[3L]),
+                function(t) matrix(Y[, , t], dim(Y)[1L], dim(Y)[2L]))
   }
   if (!is.list(Y)) {
     stop("`Y` must be a list of binary matrices or an N x P x T array.")
@@ -193,16 +196,33 @@ mean_bernoulli_var <- function(prob) {
 #' Accumulate the natural parameter stack from the increments
 #'
 #' @param Z list of T increment matrices
-#' @param mu0 scalar offset of the first mask
-#' @param nu numeric vector of length T-1 holding the offsets of masks 1..T-1
+#' @param mu0 offset of the first mask: a scalar, or a vector of length P
+#'   holding one offset per column
+#' @param nu offset increments of masks 2..T: a numeric vector of length T-1, or
+#'   a (T-1) x P matrix holding one increment per column
 #' @returns list of T matrices \eqn{X^{(t)} = \mu_t + \sum_{t' \le t} Z^{(t')}}
 #' @details
 #' Hot kernel. Uses the telescoping identity \eqn{\mu_0 + \sum_{t'=1}^{t}\nu_{t'}
 #' = \mu_t} so only a running sum is needed.
+#'
+#' Column offsets are broadcast with `rep(x, each = n)`. Plain recycling of a
+#' length-P vector against an n x P matrix runs down the rows, which is wrong.
 #' @keywords internal
 stack_forward <- function(Z, mu0, nu) {
   Tn <- length(Z)
   X <- vector("list", Tn)
+  if (is.matrix(nu) || length(mu0) > 1L) {
+    n <- nrow(Z[[1L]])
+    running <- Z[[1L]] + rep(mu0, each = n)
+    X[[1L]] <- running
+    if (Tn > 1L) {
+      for (t in seq.int(2L, Tn)) {
+        running <- running + Z[[t]] + rep(nu[t - 1L, ], each = n)
+        X[[t]] <- running
+      }
+    }
+    return(X)
+  }
   running <- Z[[1L]] + mu0
   X[[1L]] <- running
   if (Tn > 1L) {
@@ -212,6 +232,63 @@ stack_forward <- function(Z, mu0, nu) {
     }
   }
   X
+}
+
+
+#' Enforce the monotonicity restriction on a stack of increments
+#'
+#' @param Z list of T increment matrices
+#' @param nu offset increments, a vector of length T-1 or a (T-1) x P matrix, as
+#'   in [stack_forward()]
+#' @returns `Z` with \eqn{Z^{(t)} \leftarrow \min(Z^{(t)}, -\nu_t)} for t >= 2
+#' @details
+#' Pure elementwise pass. \eqn{Z^{(t)} \le -\nu_t} is exactly
+#' \eqn{X^{(t)} \le X^{(t-1)}}, so the returned stack gives non-increasing
+#' probabilities across thresholds.
+#' @keywords internal
+clip_increments <- function(Z, nu) {
+  Tn <- length(Z)
+  if (Tn < 2L) return(Z)
+  n <- nrow(Z[[1L]])
+  for (t in seq.int(2L, Tn)) {
+    level <- if (is.matrix(nu)) rep(-nu[t - 1L, ], each = n) else -nu[t - 1L]
+    Z[[t]] <- pmin(Z[[t]], level)
+  }
+  Z
+}
+
+
+#' Expected value implied by a stack of survival probabilities
+#'
+#' @param prob list of T n x P matrices, \eqn{S^{(t)}_{ij} = P(A_{ij} > d_{tj})}
+#' @param M a (T+1) x P matrix of interval representatives: row 1 for
+#'   \eqn{(-\infty, d_1]}, row t+1 for \eqn{(d_t, d_{t+1}]}, row T+1 for
+#'   \eqn{(d_T, \infty)}
+#' @returns an n x P matrix,
+#'   \eqn{\hat A_{ij} = \sum_{t=0}^{T} (S_t - S_{t+1}) m_{tj}}
+#' @details
+#' Hot kernel. Evaluated in the Abel summation form
+#' \eqn{\hat A_{ij} = m_{0j} + \sum_{t=1}^{T} S^{(t)}_{ij}(m_{tj} - m_{t-1,j})},
+#' the discrete analogue of \eqn{E X = \int S(x)\,dx}, so only one pass per
+#' mask is needed. Because the representatives are non-decreasing in t, the
+#' result lies in \eqn{[m_{0j}, m_{Tj}]} for any probabilities in \eqn{[0, 1]},
+#' monotone or not.
+#'
+#' Passing the binary masks themselves as `prob` returns each entry's own
+#' interval representative, which is the binned control.
+#' @keywords internal
+survival_expectation <- function(prob, M) {
+  Tn <- length(prob)
+  n <- nrow(prob[[1L]])
+  P <- ncol(prob[[1L]])
+  if (!is.matrix(M) || nrow(M) != Tn + 1L || ncol(M) != P) {
+    stop("`M` must be a (T+1) x P matrix matching `prob`.")
+  }
+  out <- matrix(rep(M[1L, ], each = n), n, P)
+  for (t in seq_len(Tn)) {
+    out <- out + prob[[t]] * rep(M[t + 1L, ] - M[t, ], each = n)
+  }
+  out
 }
 
 
@@ -254,8 +331,10 @@ grad_backward <- function(X, Y) {
 #' @param max_partial give up searching for the rank after this many partial
 #'   decompositions and compute the exact one instead
 #' @returns a list with the thresholded matrix `mat`, the retained rank `rank`,
-#'   the retained singular values `d`, the rank guess to reuse next time
-#'   `rank_next`, and the number of decompositions performed `n_svd`
+#'   the retained singular values `d`, their right singular vectors `v` (an
+#'   `ncol(M) x rank` matrix, zero columns when nothing is retained), the rank
+#'   guess to reuse next time `rank_next`, and the number of decompositions
+#'   performed `n_svd`
 #' @details
 #' Follows the softImpute prescription referenced at the end of section 2.2:
 #' compute a partial SVD of size `rank_guess`, and if its smallest singular
@@ -350,6 +429,7 @@ soft_svt <- function(M, thresh, rank_guess = 5L, rank_max = NULL,
 
   if (length(keep) == 0L) {
     return(list(mat = matrix(0, nr, nc), rank = 0L, d = numeric(0),
+                v = matrix(0, nc, 0L),
                 rank_next = max(1L, min(rank_step, rank_cap)), n_svd = n_svd))
   }
 
@@ -358,7 +438,8 @@ soft_svt <- function(M, thresh, rank_guess = 5L, rank_max = NULL,
   v <- sv$v[, keep, drop = FALSE]
   mat <- u %*% (dshrunk * t(v))
 
-  list(mat = mat, rank = length(keep), d = dshrunk,
+  # `v` is kept so that a fitted block can fold in new rows; see predict.bmfsvt().
+  list(mat = mat, rank = length(keep), d = dshrunk, v = v,
        rank_next = rank_next, n_svd = n_svd)
 }
 
