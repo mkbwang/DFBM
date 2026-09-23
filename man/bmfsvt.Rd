@@ -18,6 +18,7 @@ bmfsvt(
   rank_max = NULL,
   rank_step = 2L,
   clip = TRUE,
+  offset = c("scalar", "column"),
   L_init = c("stacked", "single", "worst"),
   restart = c("gradient", "function", "none"),
   svd_method = c("auto", "full", "svds"),
@@ -75,6 +76,19 @@ to make the constants non decreasing and trade adaptivity for speed.}
 SVT outcome. Setting this to \code{FALSE} solves the unconstrained stacked
 problem, which is useful as a reference for how hard the constraint binds.}
 
+\item{offset}{\code{"scalar"} uses one unpenalized offset per mask,
+\eqn{\mu_t = \mathrm{logit}(\bar Y^{(t)})}, as in the method note.
+\code{"column"} uses one per mask \strong{and column},
+\eqn{\mu_{tj} = \mathrm{logit}(\bar Y^{(t)}_{\cdot j})}, so \code{mu} becomes a
+T x P matrix and \code{nu} a (T-1) x P matrix. Use \code{"column"} whenever column
+prevalences differ strongly: a column main effect is expensive for a
+nuclear-norm penalized block to absorb, and on the HRS composition data the
+scalar offsets fitted a column that is 49\% nonzero at 0.81 on average. When
+the masks come from per-column quantile thresholds the column prevalences
+are identical except for zero-heavy columns, so the two settings then
+coincide everywhere else. \code{\link[=lambda_star_seq]{lambda_star_seq()}} and the Cp variance stay
+pooled under either setting.}
+
 \item{L_init}{how to initialize the Lipschitz constants. \code{"stacked"} uses
 \eqn{\sum_{t' \ge t} \pi_{t'}(1-\pi_{t'})}, \code{"single"} reproduces the
 method note exactly with \eqn{\pi_t(1-\pi_t)}, \code{"worst"} uses the
@@ -104,7 +118,13 @@ a list with components
 \item{prob}{list of T matrices, \eqn{\sigma(X^{(t)})}, the estimated
 marginal probability that an entry exceeds threshold t}
 \item{Z}{list of T increment matrices actually optimized}
-\item{mu, nu}{offsets and offset increments}
+\item{mu, nu}{offsets and offset increments: vectors of length T and
+T-1 under \code{offset = "scalar"}, T x P and (T-1) x P matrices under
+\code{"column"}}
+\item{offset}{which offset parameterization was used}
+\item{V}{list of T \verb{P x ranks[t]} matrices of right singular vectors
+paired with \code{dvals}. Like \code{dvals} they describe the thresholded block
+before clipping. Used by \code{\link[=predict.bmfsvt]{predict.bmfsvt()}} to fold in new rows.}
 \item{lambda, L}{shrinkage parameters and final Lipschitz constants}
 \item{ranks}{retained rank of each block}
 \item{dvals}{retained singular values of each block after shrinkage, as
@@ -137,8 +157,10 @@ entry contributes to the likelihood of every mask. The set of entries
 informing the fit does not shrink as thresholds grow.
 
 A single mask (\code{T = 1}) reduces this to Algorithm 1.
+
+The returned object has class \code{"bmfsvt"}.
 }
 \seealso{
 \code{\link[=tune.bmfsvt]{tune.bmfsvt()}} for choosing \code{alpha}, \code{\link[=lambda_star_seq]{lambda_star_seq()}} for the
-shrinkage scale.
+shrinkage scale, \code{\link[=predict.bmfsvt]{predict.bmfsvt()}} for new rows.
 }

@@ -41,8 +41,10 @@ decompositions and compute the exact one instead}
 }
 \value{
 a list with the thresholded matrix \code{mat}, the retained rank \code{rank},
-the retained singular values \code{d}, the rank guess to reuse next time
-\code{rank_next}, and the number of decompositions performed \code{n_svd}
+the retained singular values \code{d}, their right singular vectors \code{v} (an
+\verb{ncol(M) x rank} matrix, zero columns when nothing is retained), the rank
+guess to reuse next time \code{rank_next}, and the number of decompositions
+performed \code{n_svd}
 }
 \description{
 Adaptive rank soft thresholded singular value decomposition

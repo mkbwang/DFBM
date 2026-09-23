@@ -340,6 +340,8 @@ test_that("tune.bmfsvt selects a grid alpha under both criteria", {
   expect_true(all(is.finite(cp$path$cp)))
   expect_true(all(is.na(cp$path$M)))          # no bootstrap was run
   expect_length(cp$fit$prob, 3L)
+  expect_s3_class(cp$fit, "bmfsvt")
+  expect_length(cp$fit$V, 3L)
 
   bo <- tune.bmfsvt(sim$Y, alpha_grid = grid, criterion = "boot", B = 3L,
                     window = 1L, seed = 2, max_iter = 60L, svd_method = "full")
@@ -363,4 +365,134 @@ test_that("bmfsvt_path reproduces individual fits and returns usable dvals", {
   expect_equal(DFBM:::path_prob(path, 1L), direct$prob, tolerance = 1e-8)
   expect_length(direct$dvals, 3L)
   expect_equal(vapply(direct$dvals, length, integer(1)), direct$ranks)
+})
+
+
+test_that("soft_svt returns orthonormal right singular vectors for what it keeps", {
+  set.seed(3)
+  M <- tcrossprod(matrix(rnorm(40 * 3), 40, 3), matrix(rnorm(25 * 3), 25, 3))
+  for (method in c("full", "svds")) {
+    got <- soft_svt(M, 2, rank_guess = 1L, method = method)
+    expect_equal(ncol(got$v), got$rank, info = paste("method:", method))
+    expect_equal(crossprod(got$v), diag(got$rank), tolerance = 1e-8,
+                 info = paste("method:", method))
+  }
+  expect_equal(dim(soft_svt(M, 1e6)$v), c(25L, 0L))
+})
+
+
+test_that("bmfsvt stores singular vectors spanning its unclipped blocks", {
+  sim <- make_stack(N = 50, P = 30, Tn = 3, seed = 61)
+  fit <- bmfsvt(sim$Y, alpha = 0.3, clip = FALSE, max_iter = 200L,
+                svd_method = "full")
+
+  expect_s3_class(fit, "bmfsvt")
+  expect_equal(fit$offset, "scalar")
+  expect_true(all(fit$ranks > 0L))
+  for (t in 1:3) {
+    expect_equal(ncol(fit$V[[t]]), fit$ranks[t])
+    expect_length(fit$dvals[[t]], fit$ranks[t])
+    expect_equal(fit$Z[[t]] %*% tcrossprod(fit$V[[t]]), fit$Z[[t]],
+                 tolerance = 1e-8)
+  }
+  expect_error(bmfsvt(sim$Y, max_iter = 0L), "max_iter")
+})
+
+
+test_that("folding the training rows back in reproduces an unclipped fit", {
+  sim <- make_stack(N = 60, P = 25, Tn = 3, seed = 63)
+  for (offset in c("scalar", "column")) {
+    fit <- bmfsvt(sim$Y, alpha = 0.3, clip = FALSE, tol = 1e-12,
+                  max_iter = 5000L, svd_method = "full", offset = offset)
+    expect_true(fit$converged, info = offset)
+    pr <- predict(fit, sim$Y, tol = 1e-9)
+    expect_true(all(pr$converged), info = offset)
+    for (t in 1:3) {
+      expect_lt(max(abs(pr$X[[t]] - fit$X[[t]])), 1e-4)
+    }
+  }
+})
+
+
+test_that("fold-in treats every row independently", {
+  sim <- make_stack(N = 40, P = 20, Tn = 3, seed = 65)
+  fit <- bmfsvt(sim$Y, alpha = 0.3, max_iter = 300L, svd_method = "full")
+  all_rows <- predict(fit, sim$Y)
+
+  sub <- predict(fit, lapply(sim$Y, function(y) y[1:5, , drop = FALSE]))
+  one <- predict(fit, lapply(sim$Y, function(y) y[2, , drop = FALSE]))
+  arr <- array(unlist(lapply(sim$Y, function(y) y[2, , drop = FALSE])),
+               c(1L, 20L, 3L))
+  one_arr <- predict(fit, arr)
+  for (t in 1:3) {
+    expect_lt(max(abs(sub$prob[[t]] - all_rows$prob[[t]][1:5, ])), 1e-6)
+    expect_equal(dim(one$prob[[t]]), c(1L, 20L))
+    expect_lt(max(abs(one$prob[[t]] - all_rows$prob[[t]][2, ])), 1e-6)
+    expect_equal(one_arr$prob[[t]], one$prob[[t]])
+  }
+})
+
+
+test_that("clipped fold-in is monotone and close to the in-sample fit", {
+  sim <- make_stack(N = 60, P = 40, Tn = 5, seed = 13)
+  fit <- bmfsvt(sim$Y, alpha = 0.2, max_iter = 300L, clip = TRUE,
+                svd_method = "full")
+  pr <- predict(fit, sim$Y)
+  gap <- mean(abs(unlist(pr$prob) - unlist(fit$prob)))
+  expect_lt(gap, 1e-2)
+
+  # Masks the fit never saw.
+  set.seed(4)
+  U <- matrix(runif(10 * 40), 10, 40)
+  pn <- predict(fit, lapply(c(0.2, 0.4, 0.6, 0.8, 0.9), function(q) 1 * (U > q)))
+  for (res in list(pr, pn)) {
+    for (t in 2:5) {
+      expect_true(all(res$prob[[t]] <= res$prob[[t - 1]] + 1e-12))
+    }
+    expect_true(all(res$converged))
+    expect_true(all(res$row_ce > 0))
+  }
+})
+
+
+test_that("with every block at rank zero the fold-in returns the offsets", {
+  sim <- make_stack(N = 40, P = 25, Tn = 3, seed = 5)
+  fit <- bmfsvt(sim$Y, lambda = lambda_max_seq(sim$Y) * 1.001, max_iter = 30L,
+                svd_method = "full")
+  expect_true(all(vapply(fit$V, ncol, integer(1)) == 0L))
+
+  pr <- predict(fit, sim$Y)
+  expect_true(all(pr$converged))
+  for (t in 1:3) {
+    expect_equal(range(pr$prob[[t]]), rep(plogis(fit$mu[t]), 2L),
+                 tolerance = 1e-12)
+  }
+  expect_error(predict(fit, sim$Y[1:2]), "masks")
+  expect_error(predict(fit, lapply(sim$Y, function(y) y[, 1:10])), "columns")
+})
+
+
+test_that("column offsets calibrate a zero-inflated column", {
+  sim <- make_stack(N = 80, P = 30, Tn = 4, seed = 71)
+  set.seed(2)
+  z <- runif(80) < 0.6
+  # Zeroing the same rows in every mask keeps the stack nested.
+  Y <- lapply(sim$Y, function(y) { y[z, 1] <- 0; y })
+  lam <- 0.3 * lambda_star_seq(Y, C = 5L, seed = 1L)
+
+  sc <- bmfsvt(Y, lambda = lam, max_iter = 300L, svd_method = "full")
+  co <- bmfsvt(Y, lambda = lam, max_iter = 300L, svd_method = "full",
+               offset = "column")
+  expect_equal(dim(co$mu), c(4L, 30L))
+  expect_equal(dim(co$nu), c(3L, 30L))
+  expect_true(all(co$nu <= 0))
+
+  err <- function(f) {
+    sum(vapply(1:4, function(t) abs(mean(f$prob[[t]][, 1]) - mean(Y[[t]][, 1])),
+               numeric(1)))
+  }
+  expect_lt(err(co), err(sc))
+
+  default <- bmfsvt(Y, lambda = lam, max_iter = 300L, svd_method = "full")
+  expect_identical(default$prob, sc$prob)
 })
