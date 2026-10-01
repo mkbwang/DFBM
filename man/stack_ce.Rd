@@ -4,12 +4,14 @@
 \alias{stack_ce}
 \title{Stacked cross entropy over all masks}
 \usage{
-stack_ce(X, Y)
+stack_ce(X, Y, train = NULL)
 }
 \arguments{
 \item{X}{list of natural parameter matrices}
 
 \item{Y}{list of binary matrices}
+
+\item{train}{optional training mask, see \code{\link[=logistic_ce]{logistic_ce()}}}
 }
 \value{
 the summed negative log likelihood

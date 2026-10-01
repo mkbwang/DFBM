@@ -82,17 +82,57 @@ as_mask_list <- function(Y, check_nested = TRUE) {
 }
 
 
+#' Validate a training mask
+#'
+#' @param train `NULL` or an N x P matrix of 0/1 (or logical) values, 1 marking
+#'   the entries that enter the likelihood
+#' @param N,P dimensions of the binary masks
+#' @returns `NULL`, or `train` as a double matrix. A mask that selects every
+#'   entry is returned as `NULL`, so the unmasked code path (and its cost) is
+#'   used whenever nothing is held out.
+#' @keywords internal
+check_train <- function(train, N, P) {
+  if (is.null(train)) return(NULL)
+  if (!is.matrix(train) || !identical(dim(train), c(as.integer(N), as.integer(P)))) {
+    stop("`train` must be an N x P matrix matching the binary masks.")
+  }
+  storage.mode(train) <- "double"
+  if (anyNA(train) || any(train != 0 & train != 1)) {
+    stop("`train` must contain only 0 and 1.")
+  }
+  if (all(train == 1)) return(NULL)
+  if (!any(train == 1)) stop("`train` marks no training entries.")
+  train
+}
+
+
+#' Prevalence of each mask over the training entries
+#'
+#' @param Y list of T binary matrices
+#' @param train `NULL` or a validated training mask, see [check_train()]
+#' @returns numeric vector of length T
+#' @keywords internal
+mask_prevalence <- function(Y, train = NULL) {
+  if (is.null(train)) return(vapply(Y, mean, numeric(1L)))
+  nobs <- sum(train)
+  vapply(Y, function(mat) sum(train * mat) / nobs, numeric(1L))
+}
+
+
 #' Penalized cross entropy of one binary mask
 #'
 #' @param X real valued matrix of natural parameters
 #' @param Y binary matrix
-#' @returns the summed negative log likelihood
+#' @param train optional 0/1 matrix of the same size marking the entries that
+#'   enter the likelihood; `NULL` uses every entry
+#' @returns the summed negative log likelihood over the training entries
 #' @details
 #' Hot kernel. Written as \eqn{-YX + \log(1+e^X)} so that [log1exp()] handles the
 #' large-\eqn{X} branch; evaluating \code{log(sigmoid(X))} directly underflows.
 #' @keywords internal
-logistic_ce <- function(X, Y) {
-  sum(log1exp(X) - Y * X)
+logistic_ce <- function(X, Y, train = NULL) {
+  val <- log1exp(X) - Y * X
+  if (is.null(train)) sum(val) else sum(train * val)
 }
 
 
@@ -292,22 +332,69 @@ survival_expectation <- function(prob, M) {
 }
 
 
+#' CRPS of the discrete distribution implied by a survival stack
+#'
+#' @param prob list of T probability vectors or matrices of a common length n,
+#'   \eqn{S^{(t)} = P(A > d_t)}
+#' @param M (T+1) x n matrix of atoms, column i holding \eqn{m_0 \le \cdots \le
+#'   m_T} for entry i (for a column-wise representative matrix `Mcol` and entry
+#'   columns `j`, pass `Mcol[, j]`)
+#' @param y length n vector of observed values
+#' @returns length n vector of CRPS values
+#' @details
+#' Hot kernel. The predictive distribution puts mass \eqn{S_t - S_{t+1}} (with
+#' \eqn{S_0 = 1}, \eqn{S_{T+1} = 0}) on atom \eqn{m_t}, the distribution whose
+#' mean is the denoised value of [survival_expectation()]. Its CDF equals
+#' \eqn{1 - S_{k+1}} on \eqn{[m_k, m_{k+1})}, so
+#' \deqn{\mathrm{CRPS} = \int (F(x) - 1\{x \ge y\})^2 dx =
+#'   \sum_k \big[(1-S_{k+1})^2 b_k + S_{k+1}^2 (g_k - b_k)\big] +
+#'   (m_0 - y)_+ + (y - m_T)_+,}
+#' with gap \eqn{g_k = m_{k+1} - m_k} and \eqn{b_k = \min(\max(y - m_k, 0), g_k)}
+#' the part of the gap lying below `y`. Exact and vectorized, in place of a
+#' numerical integral per entry.
+#'
+#' Probabilities are not required to be monotone in t; the formula integrates
+#' whatever step function they define.
+#' @keywords internal
+crps_discrete <- function(prob, M, y) {
+  Tn <- length(prob)
+  if (!is.matrix(M) || nrow(M) != Tn + 1L || ncol(M) != length(y)) {
+    stop("`M` must be a (T+1) x n matrix matching `prob` and `y`.")
+  }
+  out <- pmax(M[1L, ] - y, 0) + pmax(y - M[Tn + 1L, ], 0)
+  for (k in seq_len(Tn)) {
+    s <- as.vector(prob[[k]])
+    g <- M[k + 1L, ] - M[k, ]
+    b <- pmin(pmax(y - M[k, ], 0), g)
+    out <- out + (1 - s)^2 * b + s^2 * (g - b)
+  }
+  out
+}
+
+
 #' Reverse cumulative gradient of the stacked cross entropy
 #'
 #' @param X list of T natural parameter matrices
 #' @param Y list of T binary matrices
+#' @param train optional 0/1 matrix marking the training entries; `NULL` uses
+#'   every entry
 #' @returns list of T matrices \eqn{\Psi_t = \sum_{t' \ge t} (\sigma(X^{(t')}) - Y^{(t')})}
 #' @details
 #' Hot kernel. Because \eqn{X^{(t')}} depends on \eqn{Z^{(t)}} for every
 #' \eqn{t' \ge t}, the gradient with respect to \eqn{Z^{(t)}} is a reverse
 #' cumulative sum, computed here in a single backward pass.
+#'
+#' With `train`, held-out entries contribute a zero residual (line 21 of
+#' Algorithm 2 restricted to the training entries). The proximal step then
+#' leaves them at the current low-rank fit, so they are imputed as in softImpute.
 #' @keywords internal
-grad_backward <- function(X, Y) {
+grad_backward <- function(X, Y, train = NULL) {
   Tn <- length(X)
   Psi <- vector("list", Tn)
   running <- NULL
   for (t in seq.int(Tn, 1L)) {
     resid <- sigmoid(X[[t]]) - Y[[t]]
+    if (!is.null(train)) resid <- resid * train
     running <- if (is.null(running)) resid else running + resid
     Psi[[t]] <- running
   }
@@ -481,6 +568,10 @@ lambda_max_seq <- function(Y) {
 #' @param Y list of T binary matrices, or an N x P x T array
 #' @param C number of pure noise replicates to average
 #' @param seed optional integer; makes the Monte Carlo draw reproducible
+#' @param train optional 0/1 N x P matrix of training entries. The prevalences
+#'   are then taken over the training entries and the noise residual is zeroed
+#'   on the held-out ones, which is the noise floor of the gradient that
+#'   [bmfsvt()] actually sees when fitted with the same `train`.
 #' @returns a numeric vector of length T
 #' @details
 #' \eqn{\lambda^*_t = \frac{1}{C}\sum_c \| \sum_{t' \ge t}
@@ -504,18 +595,26 @@ lambda_max_seq <- function(Y) {
 #' \eqn{N = 150}), so averaging 20 draws puts the Monte Carlo error near 0.5%,
 #' well inside one step of the recommended grid (20%).
 #'
+#' **With `train`, the floor is that of the masked problem.** Removing a
+#' fraction of the entries shrinks the noise gradient by roughly the square root
+#' of the training fraction. Anchoring a cross-validation fit on the full-data
+#' floor would shrink it about `1/prop` times harder than the refit at the same
+#' `alpha`; anchoring on its own floor keeps `alpha` meaning the same fraction
+#' of the problem's own noise level. See [cv.bmfsvt()].
+#'
 #' Cost is `C` partial decompositions per threshold, paid **once per data set**:
 #' the whole \eqn{\alpha} grid rescales the same vector, so this must not be
 #' called per candidate.
 #' @seealso [lambda_max_seq()] for the upper bound
 #' @importFrom stats runif
 #' @export
-lambda_star_seq <- function(Y, C = 20L, seed = NULL) {
+lambda_star_seq <- function(Y, C = 20L, seed = NULL, train = NULL) {
   Y <- as_mask_list(Y, check_nested = FALSE)
   Tn <- length(Y)
   N <- nrow(Y[[1L]])
   P <- ncol(Y[[1L]])
-  pis <- vapply(Y, mean, numeric(1L))
+  train <- check_train(train, N, P)
+  pis <- mask_prevalence(Y, train)
 
   # This is called from inside bmfsvt() by default, so a `seed` must not leak
   # into the caller's RNG stream: isolate it and put the stream back on exit.
@@ -536,6 +635,7 @@ lambda_star_seq <- function(Y, C = 20L, seed = NULL) {
     for (t in seq.int(Tn, 1L)) {
       # I[U < pi_t] is the pure noise mask; the same U drives every threshold.
       resid <- pis[t] - (U < pis[t])
+      if (!is.null(train)) resid <- resid * train
       running <- if (is.null(running)) resid else running + resid
       acc[t] <- acc[t] + spectral_norm(running)
     }

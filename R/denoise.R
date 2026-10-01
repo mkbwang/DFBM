@@ -171,6 +171,9 @@ make_masks <- function(A, thresholds) {
 #' @param cap length P vector of caps from [choose_thresholds()]
 #' @param summary `"mean"` for the mean of the capped values in each interval,
 #'   `"median"` for their median
+#' @param train optional n x P 0/1 matrix; each column is then summarized over
+#'   its training entries only, so that held-out values never inform the
+#'   representatives they are scored against (see [cv.bmfsvt()])
 #' @returns a (T+1) x P matrix with rows `I0, ..., IT`: row 1 for
 #'   \eqn{(-\infty, d_1]}, row t+1 for \eqn{(d_t, d_{t+1}]}, row T+1 for
 #'   \eqn{(d_T, \infty)}
@@ -191,22 +194,25 @@ make_masks <- function(A, thresholds) {
 #' probability.
 #' @importFrom stats median
 #' @export
-interval_values <- function(A, thresholds, cap, summary = c("mean", "median")) {
+interval_values <- function(A, thresholds, cap, summary = c("mean", "median"),
+                            train = NULL) {
   summary <- match.arg(summary)
   A <- check_abundance(A)
   check_columns(A, thresholds)
   Tn <- nrow(thresholds)
   P <- ncol(A)
   if (length(cap) != P) stop("`cap` must have one element per column.")
+  train <- check_train(train, nrow(A), P)
   f <- if (summary == "mean") mean else stats::median
 
   M <- matrix(NA_real_, Tn + 1L, P)
   for (j in seq_len(P)) {
     d <- thresholds[, j]
+    a <- if (is.null(train)) A[, j] else A[train[, j] == 1, j]
     # bin k holds d_k < x <= d_{k+1}, i.e. exactly the entries whose masks
     # 1..k are one and k+1..T are zero.
-    bin <- findInterval(A[, j], d, left.open = TRUE)
-    xc <- pmin(A[, j], cap[j])
+    bin <- findInterval(a, d, left.open = TRUE)
+    xc <- pmin(a, cap[j])
     for (k in 0:Tn) {
       in_k <- bin == k
       M[k + 1L, j] <- if (any(in_k)) f(xc[in_k]) else
@@ -238,14 +244,20 @@ closure <- function(A) {
 #'
 #' @param A training abundance matrix (or data frame), samples in rows,
 #'   nonnegative, no missing values
-#' @param alpha `NULL` to choose the shrinkage with [tune.bmfsvt()]
-#'   (Mallows Cp), or a single number to skip tuning and fit once at
-#'   \eqn{\lambda = \alpha \lambda^*}. A fixed `alpha` costs one fit instead of a
-#'   whole path and is meant for a quick first look; the measured optimum is
-#'   about 0.585.
+#' @param alpha `NULL` to choose the shrinkage by entry-wise cross-validation,
+#'   [cv.bmfsvt()], or a single number to skip tuning and fit once at
+#'   \eqn{\lambda = \alpha \lambda^*}. A fixed `alpha` costs one fit instead of
+#'   `n_splits` whole paths and is meant for a quick first look; the measured
+#'   optimum in simulation is about 0.585.
 #' @param levels,zero_tol,q_cap threshold settings, see [choose_thresholds()]
 #' @param summary interval summary, see [interval_values()]
 #' @param alpha_grid grid searched when `alpha` is `NULL`
+#' @param loss validation loss selecting `alpha`, see [cv.bmfsvt()]. `"rps"`
+#'   scores the survival probabilities and is free of column scale; `"mse"` and
+#'   `"crps"` score the denoised values against the capped truth, each column
+#'   divided by its own standard deviation. All three are reported in `cv`.
+#' @param n_splits,train_prop number of train/validation splits and the
+#'   training proportion of each row and column, see [cv.bmfsvt()]
 #' @param offset offset parameterization passed to [bmfsvt()]. `"column"` is the
 #'   default here because zero-heavy columns have prevalences far from the
 #'   others.
@@ -254,15 +266,17 @@ closure <- function(A) {
 #' @param flag_prob rows whose misfit `row_ce` exceeds this quantile of the
 #'   training misfits are flagged
 #' @param C pure noise replicates for [lambda_star_seq()]
-#' @param seed optional seed making [lambda_star_seq()] reproducible
+#' @param seed optional seed making [lambda_star_seq()] and the
+#'   cross-validation splits reproducible
 #' @param tol per-row tolerance of the fold-in, see [predict.bmfsvt()]
-#' @param ... further arguments passed to [bmfsvt()], or to [tune.bmfsvt()] when
-#'   `alpha` is `NULL`
+#' @param ... further arguments passed to [bmfsvt()], or to [cv.bmfsvt()] when
+#'   `alpha` is `NULL` (e.g. `ncores`, `rule`)
 #'
 #' @returns an object of class `"dfbm"`: the fitted settings (`thresholds`,
 #'   `cap`, `levels`, `cap_level`, `zero_frac`, `zero_tol`, `base_levels`, the
 #'   representatives `M`, `summary`, `close`, `tol`, `colnames`), the
-#'   factorization `fit` with its `alpha` and, when tuned, `tune_path`, the
+#'   factorization `fit` with its `alpha` and, when tuned, `cv` (the per-alpha
+#'   validation losses of [cv.bmfsvt()]), the
 #'   misfit cutoff `row_ce_cut`, `insample_gap` (mean and max absolute
 #'   difference between the fold-in and in-sample probabilities), and the
 #'   training output of [predict.dfbm()]: `denoised`, `prob`, `row_sum`,
@@ -272,7 +286,8 @@ closure <- function(A) {
 #' The steps are:
 #' 1. per-column thresholds [choose_thresholds()] and nested masks
 #'    [make_masks()];
-#' 2. a joint factorization of the masks, [bmfsvt()] or [tune.bmfsvt()], giving
+#' 2. a joint factorization of the masks, [bmfsvt()] with `alpha` given or
+#'    chosen by [cv.bmfsvt()], giving
 #'    \eqn{S^{(t)}_{ij} = P(A_{ij} > d_{tj})};
 #' 3. capped interval representatives [interval_values()];
 #' 4. the denoised value
@@ -314,9 +329,12 @@ dfbm <- function(A, alpha = NULL, levels = seq(0.05, 0.95, by = 0.1),
                  zero_tol = 1e-12, q_cap = 0.99,
                  summary = c("mean", "median"),
                  alpha_grid = exp(seq(log(1), log(0.2), length.out = 10L)),
+                 loss = c("rps", "mse", "crps"), n_splits = 5L,
+                 train_prop = 0.8,
                  offset = c("column", "scalar"), close = TRUE,
                  flag_prob = 0.999, C = 20L, seed = NULL, tol = 1e-6, ...) {
   summary <- match.arg(summary)
+  loss <- match.arg(loss)
   offset <- match.arg(offset)
   A <- check_abundance(A)
 
@@ -325,11 +343,14 @@ dfbm <- function(A, alpha = NULL, levels = seq(0.05, 0.95, by = 0.1),
   Y <- make_masks(A, th$thresholds)
 
   if (is.null(alpha)) {
-    tuned <- tune.bmfsvt(Y, alpha_grid = alpha_grid, criterion = "cp", C = C,
-                         seed = seed, offset = offset, ...)
+    tuned <- cv.bmfsvt(Y, alpha_grid = alpha_grid, loss = loss,
+                       n_splits = n_splits, train_prop = train_prop,
+                       A = A, thresholds = th$thresholds, cap = th$cap,
+                       summary = summary, C = C, seed = seed, offset = offset,
+                       ...)
     fit <- tuned$fit
     alpha <- tuned$alpha
-    tune_path <- tuned$path
+    cv <- tuned$cv
   } else {
     if (!is.numeric(alpha) || length(alpha) != 1L || !(alpha > 0)) {
       stop("`alpha` must be NULL or a single positive number.")
@@ -338,7 +359,7 @@ dfbm <- function(A, alpha = NULL, levels = seq(0.05, 0.95, by = 0.1),
     # and would draw the noise floor from the global RNG stream.
     lambda <- alpha * lambda_star_seq(Y, C = C, seed = seed)
     fit <- bmfsvt(Y, lambda = lambda, offset = offset, ...)
-    tune_path <- NULL
+    cv <- NULL
   }
 
   obj <- structure(
@@ -347,7 +368,7 @@ dfbm <- function(A, alpha = NULL, levels = seq(0.05, 0.95, by = 0.1),
          zero_tol = th$zero_tol, base_levels = th$base_levels,
          M = interval_values(A, th$thresholds, th$cap, summary = summary),
          summary = summary, close = close, tol = tol, colnames = colnames(A),
-         fit = fit, alpha = alpha, tune_path = tune_path,
+         fit = fit, alpha = alpha, cv = cv,
          flag_prob = flag_prob, row_ce_cut = NA_real_),
     class = "dfbm")
 

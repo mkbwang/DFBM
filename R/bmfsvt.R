@@ -9,6 +9,13 @@
 #'   nested and decreasing, i.e. \eqn{Y^{(0)}_{ij} \ge Y^{(1)}_{ij} \ge \cdots},
 #'   which holds automatically when they come from thresholding one abundance
 #'   matrix with an increasing threshold sequence.
+#' @param train optional N x P 0/1 matrix, 1 marking the entries that enter the
+#'   likelihood, shared by every mask. `NULL` (the default) uses every entry.
+#'   Held-out entries are excluded from the gradient (line 21 of Algorithm 2),
+#'   from \eqn{f} and \eqn{Q} in the backtracking test (line 38), from the
+#'   offsets and from the default noise floor, but they are still clipped (line
+#'   27) and receive fitted probabilities, imputed from the low-rank blocks. This
+#'   is what [cv.bmfsvt()] scores.
 #' @param lambda shrinkage parameter for each mask; a scalar is recycled. When
 #'   `NULL` the value `alpha * lambda_star_seq(Y, C)` is used.
 #' @param alpha shrinkage relative to the **noise floor** [lambda_star_seq()],
@@ -91,6 +98,7 @@
 #'     \item{obj_trace, clip_frac_trace}{objective and clipped-entry fraction by
 #'       iteration}
 #'     \item{n_iter, n_svd, n_backtrack, converged}{solver diagnostics}
+#'     \item{n_train}{number of entries per mask that entered the likelihood}
 #'   }
 #'
 #' @details
@@ -110,11 +118,12 @@
 #'
 #' The returned object has class `"bmfsvt"`.
 #'
-#' @seealso [tune.bmfsvt()] for choosing `alpha`, [lambda_star_seq()] for the
-#'   shrinkage scale, [predict.bmfsvt()] for new rows.
+#' @seealso [cv.bmfsvt()] and [tune.bmfsvt()] for choosing `alpha`,
+#'   [lambda_star_seq()] for the shrinkage scale, [predict.bmfsvt()] for new
+#'   rows.
 #' @importFrom stats plogis qlogis
 #' @export
-bmfsvt <- function(Y, lambda = NULL, alpha = 0.55, C = 20L,
+bmfsvt <- function(Y, train = NULL, lambda = NULL, alpha = 0.55, C = 20L,
                    max_iter = 200L, tol = 1e-5, gamma = 1.1, L_rewind = gamma,
                    delta = 1e-6,
                    rank_init = 5L, rank_max = NULL, rank_step = 2L,
@@ -137,10 +146,26 @@ bmfsvt <- function(Y, lambda = NULL, alpha = 0.55, C = 20L,
   Tn <- length(Y)
   N <- nrow(Y[[1L]])
   P <- ncol(Y[[1L]])
-  nobs <- N * P
+  train <- check_train(train, N, P)
+  nobs <- if (is.null(train)) N * P else sum(train)
+  if (!is.null(train)) {
+    n_row <- rowSums(train)
+    n_col <- colSums(train)
+    if (any(n_col == 0) && offset == "column") {
+      stop("`train` leaves some column with no training entry, so its ",
+           "column offset is undefined.")
+    }
+    if (any(n_row == 0) || any(n_col == 0)) {
+      warning("`train` leaves ", sum(n_row == 0), " row(s) and ",
+              sum(n_col == 0), " column(s) with no training entry; they are ",
+              "fitted from the offsets alone.")
+    }
+  }
 
   # ---- offsets and Lipschitz constants (Algorithm 2, lines 1-8) -------------
-  pis <- vapply(Y, mean, numeric(1L))
+  # Taken over the training entries only, or the held-out values would leak
+  # into the fit through the offsets.
+  pis <- mask_prevalence(Y, train)
   eps <- 1 / (2 * nobs)
   if (any(pis <= 0 | pis >= 1)) {
     warning("some masks are entirely 0 or entirely 1; their offsets are clamped.")
@@ -153,7 +178,12 @@ bmfsvt <- function(Y, lambda = NULL, alpha = 0.55, C = 20L,
     # Column prevalences are non-increasing in t because the masks are nested,
     # and clamping preserves the order, so nu <= 0 still holds entrywise.
     eps_col <- 1 / (2 * N)
-    pic <- matrix(vapply(Y, colMeans, numeric(P)), P, Tn)
+    pic <- if (is.null(train)) {
+      matrix(vapply(Y, colMeans, numeric(P)), P, Tn)
+    } else {
+      matrix(vapply(Y, function(mat) colSums(train * mat) / n_col,
+                    numeric(P)), P, Tn)
+    }
     pic <- pmin(pmax(pic, eps_col), 1 - eps_col)
     mu <- t(stats::qlogis(pic))
     dimnames(mu) <- NULL
@@ -173,7 +203,7 @@ bmfsvt <- function(Y, lambda = NULL, alpha = 0.55, C = 20L,
   # [lambda*, lambda_max] over-shrinks, so a fraction of lambda* is what the
   # search range needs to be. See lambda_star_seq().
   if (is.null(lambda)) {
-    lambda <- alpha * lambda_star_seq(Y, C = C)
+    lambda <- alpha * lambda_star_seq(Y, C = C, train = train)
   } else if (length(lambda) == 1L) {
     lambda <- rep(lambda, Tn)
   }
@@ -215,8 +245,8 @@ bmfsvt <- function(Y, lambda = NULL, alpha = 0.55, C = 20L,
 
     # Psi depends only on the extrapolation point W, so it is computed once
     # per outer iteration rather than once per backtrack.
-    Psi <- grad_backward(X, Y)
-    f_W <- stack_ce(X, Y)
+    Psi <- grad_backward(X, Y, train)
+    f_W <- stack_ce(X, Y, train)
 
     bt <- 0L
     repeat {
@@ -254,7 +284,7 @@ bmfsvt <- function(Y, lambda = NULL, alpha = 0.55, C = 20L,
       }
 
       Xp <- stack_forward(Zp, mu0, nu)
-      f_new <- stack_ce(Xp, Y)
+      f_new <- stack_ce(Xp, Y, train)
 
       # Q(Z' | W) = f(X_W) + <Z' - W, Psi> + sum_t L_t/2 ||Z'^(t) - W^(t)||_F^2
       quad <- f_W
@@ -340,7 +370,8 @@ bmfsvt <- function(Y, lambda = NULL, alpha = 0.55, C = 20L,
 
   # ---- constraint diagnostics (lines 58-63) --------------------------------
   diag_bd <- violation_diagnostics(Z, X, Y, lambda, L, nu, ranks,
-                                   rank_max, rank_step, svd_method)
+                                   rank_max, rank_step, svd_method,
+                                   train = train)
 
   structure(
     list(X = X,
@@ -357,6 +388,7 @@ bmfsvt <- function(Y, lambda = NULL, alpha = 0.55, C = 20L,
          clip_frac_trace = clip_frac_trace,
          n_iter = m, n_svd = n_svd, n_backtrack = n_backtrack,
          converged = converged,
+         n_train = nobs,
          clip = clip),
     class = "bmfsvt")
 }
@@ -375,11 +407,12 @@ offset_head <- function(mu) {
 #' Stacked cross entropy over all masks
 #' @param X list of natural parameter matrices
 #' @param Y list of binary matrices
+#' @param train optional training mask, see [logistic_ce()]
 #' @returns the summed negative log likelihood
 #' @keywords internal
-stack_ce <- function(X, Y) {
+stack_ce <- function(X, Y, train = NULL) {
   total <- 0
-  for (t in seq_along(X)) total <- total + logistic_ce(X[[t]], Y[[t]])
+  for (t in seq_along(X)) total <- total + logistic_ce(X[[t]], Y[[t]], train)
   total
 }
 
@@ -418,6 +451,8 @@ nuclear_penalty <- function(Z, dvals, lambda, n_clipped, mode = "approx") {
 #' @param nu offset increments
 #' @param ranks rank guesses
 #' @param rank_max,rank_step,svd_method passed to [soft_svt()]
+#' @param train optional training mask; the gradient is taken over it, as in
+#'   the fit, while the rate `b` counts every entry since every entry is clipped
 #' @returns a list with numeric vectors `b` and `d` of length T-1
 #' @details
 #' Implements lines 58 to 63: one proximal step is taken from the solution
@@ -438,12 +473,13 @@ nuclear_penalty <- function(Z, dvals, lambda, n_clipped, mode = "approx") {
 #' quantities that speak to suboptimality.
 #' @keywords internal
 violation_diagnostics <- function(Z, X, Y, lambda, L, nu, ranks,
-                                  rank_max, rank_step, svd_method) {
+                                  rank_max, rank_step, svd_method,
+                                  train = NULL) {
   Tn <- length(Z)
   if (Tn < 2L) return(list(b = numeric(0L), d = numeric(0L)))
 
   nobs <- length(Y[[1L]])
-  Psi <- grad_backward(X, Y)
+  Psi <- grad_backward(X, Y, train)
   b <- numeric(Tn - 1L)
   d <- numeric(Tn - 1L)
   for (t in seq.int(2L, Tn)) {

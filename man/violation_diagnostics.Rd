@@ -14,7 +14,8 @@ violation_diagnostics(
   ranks,
   rank_max,
   rank_step,
-  svd_method
+  svd_method,
+  train = NULL
 )
 }
 \arguments{
@@ -33,6 +34,9 @@ violation_diagnostics(
 \item{ranks}{rank guesses}
 
 \item{rank_max, rank_step, svd_method}{passed to \code{\link[=soft_svt]{soft_svt()}}}
+
+\item{train}{optional training mask; the gradient is taken over it, as in
+the fit, while the rate \code{b} counts every entry since every entry is clipped}
 }
 \value{
 a list with numeric vectors \code{b} and \code{d} of length T-1

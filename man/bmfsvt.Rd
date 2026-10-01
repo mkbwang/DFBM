@@ -6,6 +6,7 @@
 \usage{
 bmfsvt(
   Y,
+  train = NULL,
   lambda = NULL,
   alpha = 0.55,
   C = 20L,
@@ -33,6 +34,14 @@ bmfsvt(
 nested and decreasing, i.e. \eqn{Y^{(0)}_{ij} \ge Y^{(1)}_{ij} \ge \cdots},
 which holds automatically when they come from thresholding one abundance
 matrix with an increasing threshold sequence.}
+
+\item{train}{optional N x P 0/1 matrix, 1 marking the entries that enter the
+likelihood, shared by every mask. \code{NULL} (the default) uses every entry.
+Held-out entries are excluded from the gradient (line 21 of Algorithm 2),
+from \eqn{f} and \eqn{Q} in the backtracking test (line 38), from the
+offsets and from the default noise floor, but they are still clipped (line
+27) and receive fitted probabilities, imputed from the low-rank blocks. This
+is what \code{\link[=cv.bmfsvt]{cv.bmfsvt()}} scores.}
 
 \item{lambda}{shrinkage parameter for each mask; a scalar is recycled. When
 \code{NULL} the value \code{alpha * lambda_star_seq(Y, C)} is used.}
@@ -136,6 +145,7 @@ proximal step taken from the solution, for t = 1..T-1}
 \item{obj_trace, clip_frac_trace}{objective and clipped-entry fraction by
 iteration}
 \item{n_iter, n_svd, n_backtrack, converged}{solver diagnostics}
+\item{n_train}{number of entries per mask that entered the likelihood}
 }
 }
 \description{
@@ -161,6 +171,7 @@ A single mask (\code{T = 1}) reduces this to Algorithm 1.
 The returned object has class \code{"bmfsvt"}.
 }
 \seealso{
-\code{\link[=tune.bmfsvt]{tune.bmfsvt()}} for choosing \code{alpha}, \code{\link[=lambda_star_seq]{lambda_star_seq()}} for the
-shrinkage scale, \code{\link[=predict.bmfsvt]{predict.bmfsvt()}} for new rows.
+\code{\link[=cv.bmfsvt]{cv.bmfsvt()}} and \code{\link[=tune.bmfsvt]{tune.bmfsvt()}} for choosing \code{alpha},
+\code{\link[=lambda_star_seq]{lambda_star_seq()}} for the shrinkage scale, \code{\link[=predict.bmfsvt]{predict.bmfsvt()}} for new
+rows.
 }

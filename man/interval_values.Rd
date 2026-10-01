@@ -4,7 +4,13 @@
 \alias{interval_values}
 \title{Representative value of each interval between thresholds}
 \usage{
-interval_values(A, thresholds, cap, summary = c("mean", "median"))
+interval_values(
+  A,
+  thresholds,
+  cap,
+  summary = c("mean", "median"),
+  train = NULL
+)
 }
 \arguments{
 \item{A}{training abundance matrix}
@@ -15,6 +21,10 @@ interval_values(A, thresholds, cap, summary = c("mean", "median"))
 
 \item{summary}{\code{"mean"} for the mean of the capped values in each interval,
 \code{"median"} for their median}
+
+\item{train}{optional n x P 0/1 matrix; each column is then summarized over
+its training entries only, so that held-out values never inform the
+representatives they are scored against (see \code{\link[=cv.bmfsvt]{cv.bmfsvt()}})}
 }
 \value{
 a (T+1) x P matrix with rows \verb{I0, ..., IT}: row 1 for
