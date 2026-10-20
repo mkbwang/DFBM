@@ -12,6 +12,9 @@ dfbm(
   q_cap = 0.99,
   summary = c("mean", "median"),
   alpha_grid = exp(seq(log(1), log(0.2), length.out = 10L)),
+  loss = c("rps", "mse", "crps"),
+  n_splits = 5L,
+  train_prop = 0.8,
   offset = c("column", "scalar"),
   close = TRUE,
   flag_prob = 0.999,
@@ -25,17 +28,25 @@ dfbm(
 \item{A}{training abundance matrix (or data frame), samples in rows,
 nonnegative, no missing values}
 
-\item{alpha}{\code{NULL} to choose the shrinkage with \code{\link[=tune.bmfsvt]{tune.bmfsvt()}}
-(Mallows Cp), or a single number to skip tuning and fit once at
-\eqn{\lambda = \alpha \lambda^*}. A fixed \code{alpha} costs one fit instead of a
-whole path and is meant for a quick first look; the measured optimum is
-about 0.585.}
+\item{alpha}{\code{NULL} to choose the shrinkage by entry-wise cross-validation,
+\code{\link[=cv.bmfsvt]{cv.bmfsvt()}}, or a single number to skip tuning and fit once at
+\eqn{\lambda = \alpha \lambda^*}. A fixed \code{alpha} costs one fit instead of
+\code{n_splits} whole paths and is meant for a quick first look; the measured
+optimum in simulation is about 0.585.}
 
 \item{levels, zero_tol, q_cap}{threshold settings, see \code{\link[=choose_thresholds]{choose_thresholds()}}}
 
 \item{summary}{interval summary, see \code{\link[=interval_values]{interval_values()}}}
 
 \item{alpha_grid}{grid searched when \code{alpha} is \code{NULL}}
+
+\item{loss}{validation loss selecting \code{alpha}, see \code{\link[=cv.bmfsvt]{cv.bmfsvt()}}. \code{"rps"}
+scores the survival probabilities and is free of column scale; \code{"mse"} and
+\code{"crps"} score the denoised values against the capped truth, each column
+divided by its own standard deviation. All three are reported in \code{cv}.}
+
+\item{n_splits, train_prop}{number of train/validation splits and the
+training proportion of each row and column, see \code{\link[=cv.bmfsvt]{cv.bmfsvt()}}}
 
 \item{offset}{offset parameterization passed to \code{\link[=bmfsvt]{bmfsvt()}}. \code{"column"} is the
 default here because zero-heavy columns have prevalences far from the
@@ -49,18 +60,20 @@ training misfits are flagged}
 
 \item{C}{pure noise replicates for \code{\link[=lambda_star_seq]{lambda_star_seq()}}}
 
-\item{seed}{optional seed making \code{\link[=lambda_star_seq]{lambda_star_seq()}} reproducible}
+\item{seed}{optional seed making \code{\link[=lambda_star_seq]{lambda_star_seq()}} and the
+cross-validation splits reproducible}
 
 \item{tol}{per-row tolerance of the fold-in, see \code{\link[=predict.bmfsvt]{predict.bmfsvt()}}}
 
-\item{...}{further arguments passed to \code{\link[=bmfsvt]{bmfsvt()}}, or to \code{\link[=tune.bmfsvt]{tune.bmfsvt()}} when
-\code{alpha} is \code{NULL}}
+\item{...}{further arguments passed to \code{\link[=bmfsvt]{bmfsvt()}}, or to \code{\link[=cv.bmfsvt]{cv.bmfsvt()}} when
+\code{alpha} is \code{NULL} (e.g. \code{ncores}, \code{rule})}
 }
 \value{
 an object of class \code{"dfbm"}: the fitted settings (\code{thresholds},
 \code{cap}, \code{levels}, \code{cap_level}, \code{zero_frac}, \code{zero_tol}, \code{base_levels}, the
 representatives \code{M}, \code{summary}, \code{close}, \code{tol}, \code{colnames}), the
-factorization \code{fit} with its \code{alpha} and, when tuned, \code{tune_path}, the
+factorization \code{fit} with its \code{alpha} and, when tuned, \code{cv} (the per-alpha
+validation losses of \code{\link[=cv.bmfsvt]{cv.bmfsvt()}}), the
 misfit cutoff \code{row_ce_cut}, \code{insample_gap} (mean and max absolute
 difference between the fold-in and in-sample probabilities), and the
 training output of \code{\link[=predict.dfbm]{predict.dfbm()}}: \code{denoised}, \code{prob}, \code{row_sum},
@@ -74,7 +87,8 @@ The steps are:
 \enumerate{
 \item per-column thresholds \code{\link[=choose_thresholds]{choose_thresholds()}} and nested masks
 \code{\link[=make_masks]{make_masks()}};
-\item a joint factorization of the masks, \code{\link[=bmfsvt]{bmfsvt()}} or \code{\link[=tune.bmfsvt]{tune.bmfsvt()}}, giving
+\item a joint factorization of the masks, \code{\link[=bmfsvt]{bmfsvt()}} with \code{alpha} given or
+chosen by \code{\link[=cv.bmfsvt]{cv.bmfsvt()}}, giving
 \eqn{S^{(t)}_{ij} = P(A_{ij} > d_{tj})};
 \item capped interval representatives \code{\link[=interval_values]{interval_values()}};
 \item the denoised value

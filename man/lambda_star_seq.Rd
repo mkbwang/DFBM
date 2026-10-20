@@ -4,7 +4,7 @@
 \alias{lambda_star_seq}
 \title{Noise floor shrinkage parameter for each binary mask}
 \usage{
-lambda_star_seq(Y, C = 20L, seed = NULL)
+lambda_star_seq(Y, C = 20L, seed = NULL, train = NULL)
 }
 \arguments{
 \item{Y}{list of T binary matrices, or an N x P x T array}
@@ -12,6 +12,11 @@ lambda_star_seq(Y, C = 20L, seed = NULL)
 \item{C}{number of pure noise replicates to average}
 
 \item{seed}{optional integer; makes the Monte Carlo draw reproducible}
+
+\item{train}{optional 0/1 N x P matrix of training entries. The prevalences
+are then taken over the training entries and the noise residual is zeroed
+on the held-out ones, which is the noise floor of the gradient that
+\code{\link[=bmfsvt]{bmfsvt()}} actually sees when fitted with the same \code{train}.}
 }
 \value{
 a numeric vector of length T
@@ -40,6 +45,13 @@ small, the gap widening toward the dense head where more terms are summed.
 matrix has Tracy-Widom fluctuations of order \eqn{N^{-1/6}} (about 2\% at
 \eqn{N = 150}), so averaging 20 draws puts the Monte Carlo error near 0.5\%,
 well inside one step of the recommended grid (20\%).
+
+\strong{With \code{train}, the floor is that of the masked problem.} Removing a
+fraction of the entries shrinks the noise gradient by roughly the square root
+of the training fraction. Anchoring a cross-validation fit on the full-data
+floor would shrink it about \code{1/prop} times harder than the refit at the same
+\code{alpha}; anchoring on its own floor keeps \code{alpha} meaning the same fraction
+of the problem's own noise level. See \code{\link[=cv.bmfsvt]{cv.bmfsvt()}}.
 
 Cost is \code{C} partial decompositions per threshold, paid \strong{once per data set}:
 the whole \eqn{\alpha} grid rescales the same vector, so this must not be

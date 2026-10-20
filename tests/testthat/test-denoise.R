@@ -161,7 +161,7 @@ test_that("dfbm fits with a fixed alpha and returns closed positive compositions
               svd_method = "full")
 
   expect_s3_class(obj, "dfbm")
-  expect_null(obj$tune_path)
+  expect_null(obj$cv)
   expect_equal(obj$alpha, 0.5)
   expect_equal(obj$fit$offset, "column")
 
@@ -183,12 +183,16 @@ test_that("dfbm fits with a fixed alpha and returns closed positive compositions
 })
 
 
-test_that("dfbm tunes alpha on the grid when alpha is NULL", {
+test_that("dfbm cross-validates alpha on the grid when alpha is NULL", {
   A <- make_composition(n = 80, P = 6)
   obj <- dfbm(A, levels = c(0.1, 0.4, 0.7, 0.9), alpha_grid = c(1, 0.5),
-              seed = 3, C = 5L, max_iter = 100L, svd_method = "full")
+              n_splits = 2L, seed = 3, C = 5L, max_iter = 100L,
+              svd_method = "full")
   expect_true(obj$alpha %in% c(1, 0.5))
-  expect_equal(nrow(obj$tune_path), 2L)
+  expect_equal(nrow(obj$cv), 2L)
+  # dfbm always supplies the values, so every loss is reported.
+  expect_false(anyNA(obj$cv[, c("rps", "mse", "crps")]))
+  expect_equal(obj$alpha, obj$cv$alpha[which.min(obj$cv$rps)])
 })
 
 

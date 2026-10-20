@@ -4,15 +4,18 @@
 \alias{logistic_ce}
 \title{Penalized cross entropy of one binary mask}
 \usage{
-logistic_ce(X, Y)
+logistic_ce(X, Y, train = NULL)
 }
 \arguments{
 \item{X}{real valued matrix of natural parameters}
 
 \item{Y}{binary matrix}
+
+\item{train}{optional 0/1 matrix of the same size marking the entries that
+enter the likelihood; \code{NULL} uses every entry}
 }
 \value{
-the summed negative log likelihood
+the summed negative log likelihood over the training entries
 }
 \description{
 Penalized cross entropy of one binary mask

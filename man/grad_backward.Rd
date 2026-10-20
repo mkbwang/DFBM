@@ -4,12 +4,15 @@
 \alias{grad_backward}
 \title{Reverse cumulative gradient of the stacked cross entropy}
 \usage{
-grad_backward(X, Y)
+grad_backward(X, Y, train = NULL)
 }
 \arguments{
 \item{X}{list of T natural parameter matrices}
 
 \item{Y}{list of T binary matrices}
+
+\item{train}{optional 0/1 matrix marking the training entries; \code{NULL} uses
+every entry}
 }
 \value{
 list of T matrices \eqn{\Psi_t = \sum_{t' \ge t} (\sigma(X^{(t')}) - Y^{(t')})}
@@ -21,5 +24,9 @@ Reverse cumulative gradient of the stacked cross entropy
 Hot kernel. Because \eqn{X^{(t')}} depends on \eqn{Z^{(t)}} for every
 \eqn{t' \ge t}, the gradient with respect to \eqn{Z^{(t)}} is a reverse
 cumulative sum, computed here in a single backward pass.
+
+With \code{train}, held-out entries contribute a zero residual (line 21 of
+Algorithm 2 restricted to the training entries). The proximal step then
+leaves them at the current low-rank fit, so they are imputed as in softImpute.
 }
 \keyword{internal}
