@@ -5,7 +5,18 @@
 # choose thresholds(choose_thresholds) and generating masks (make_masks)
 
 
-
+#' Check the within-interval weight
+#'
+#' @param beta a single number in \eqn{[0, 1]}
+#' @returns `NULL`, invisibly; stops otherwise
+#' @keywords internal
+check_beta <- function(beta) {
+  if (!is.numeric(beta) || length(beta) != 1L || is.na(beta) ||
+      beta < 0 || beta > 1) {
+    stop("`beta` must be a single number in [0, 1].")
+  }
+  invisible(NULL)
+}
 
 #' Validate an abundance matrix
 #'
@@ -56,7 +67,10 @@ check_columns <- function(A, thresholds) {
 #'   per mask
 #' @param zero_tol entries at or below this count as zero. The default absorbs
 #'   floating point residues left by subtraction without touching real values.
-#' @param q_cap probability level of the cap, above `max(levels)` and at most 1
+#' @param q_cap probability level of the cap, above `max(levels)` and at most
+#'   1. `NULL` (default) uses 0.99, or halfway between `max(levels)` and 1 when
+#'   the levels reach 0.99, so that thresholds refined in the tail need no
+#'   manual cap
 #'
 #' @returns a list with components
 #'   \describe{
@@ -90,7 +104,7 @@ check_columns <- function(A, thresholds) {
 #' @importFrom stats quantile
 #' @export
 choose_thresholds <- function(A, levels = seq(0.05, 0.95, by = 0.1),
-                              zero_tol = 1e-12, q_cap = 0.99) {
+                              zero_tol = 1e-12, q_cap = NULL) {
   A <- check_abundance(A)
   if (!is.numeric(levels) || length(levels) < 1L || anyNA(levels) ||
       any(levels <= 0 | levels >= 1)) {
@@ -99,6 +113,7 @@ choose_thresholds <- function(A, levels = seq(0.05, 0.95, by = 0.1),
   if (is.unsorted(levels, strictly = TRUE)) {
     stop("`levels` must be strictly increasing.")
   }
+  if (is.null(q_cap)) q_cap <- max(0.99, (1 + max(levels)) / 2)
   if (!is.numeric(q_cap) || length(q_cap) != 1L || q_cap <= max(levels) ||
       q_cap > 1) {
     stop("`q_cap` must be a single number in (max(levels), 1].")

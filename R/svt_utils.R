@@ -214,7 +214,8 @@ clip_increments <- function(Z, nu) {
 #' the discrete analogue of \eqn{E X = \int S(x)\,dx}, so only one pass per
 #' mask is needed. Because the representatives are non-decreasing in t, the
 #' result lies in \eqn{[m_{0j}, m_{Tj}]} for any probabilities in \eqn{[0, 1]},
-#' monotone or not.
+#' monotone or not. Every entry whose mass sits in the top interval therefore
+#' gets \eqn{m_{Tj}}, whatever its own value; see `beta` in [predict.dfbm()].
 #'
 #' Passing the binary masks themselves as `prob` returns each entry's own
 #' interval representative, which is the binned control.
@@ -231,6 +232,36 @@ survival_expectation <- function(prob, M) {
     out <- out + prob[[t]] * rep(M[t + 1L, ] - M[t, ], each = n)
   }
   out
+}
+
+
+#' Probability the model leaves on each entry's observed interval
+#'
+#' @param prob list of T n x P matrices, \eqn{S^{(t)}_{ij} = P(A_{ij} > d_{tj})}
+#' @param Y list of T nested n x P binary masks of the same entries
+#' @returns an n x P matrix \eqn{\pi^{obs}_{ij} = S^{(k)}_{ij} - S^{(k+1)}_{ij}}
+#'   with \eqn{k = \sum_t Y^{(t)}_{ij}} the observed interval, \eqn{S^{(0)} = 1}
+#'   and \eqn{S^{(T+1)} = 0}
+#' @details
+#' Hot kernel. Because the masks are nested, \eqn{Y^{(t)} - Y^{(t+1)}} is the
+#' indicator of the observed interval being t, so
+#' \deqn{\pi^{obs} = (1 - Y^{(1)})(1 - S^{(1)}) +
+#'   \sum_{t=1}^{T-1} (Y^{(t)} - Y^{(t+1)})(S^{(t)} - S^{(t+1)}) +
+#'   Y^{(T)} S^{(T)}.}
+#' Passing the masks as `prob` gives 1 everywhere. Negative values, possible
+#' only for probabilities that are not monotone in t, are set to 0.
+#' @keywords internal
+observed_bin_prob <- function(prob, Y) {
+  Tn <- length(prob)
+  if (length(Y) != Tn) stop("`prob` and `Y` must have the same length.")
+  out <- (1 - Y[[1L]]) * (1 - prob[[1L]])
+  if (Tn > 1L) {
+    for (t in seq_len(Tn - 1L)) {
+      out <- out + (Y[[t]] - Y[[t + 1L]]) * (prob[[t]] - prob[[t + 1L]])
+    }
+  }
+  out <- out + Y[[Tn]] * prob[[Tn]]
+  pmax(out, 0)
 }
 
 

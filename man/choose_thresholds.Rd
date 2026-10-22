@@ -8,7 +8,7 @@ choose_thresholds(
   A,
   levels = seq(0.05, 0.95, by = 0.1),
   zero_tol = 1e-12,
-  q_cap = 0.99
+  q_cap = NULL
 )
 }
 \arguments{
@@ -20,7 +20,12 @@ per mask}
 \item{zero_tol}{entries at or below this count as zero. The default absorbs
 floating point residues left by subtraction without touching real values.}
 
-\item{q_cap}{probability level of the cap, above \code{max(levels)} and at most 1}
+\item{q_cap}{probability level of the cap, above \code{max(levels)} and at most
+\enumerate{
+\item \code{NULL} (default) uses 0.99, or halfway between \code{max(levels)} and 1 when
+the levels reach 0.99, so that thresholds refined in the tail need no
+manual cap
+}}
 }
 \value{
 a list with components

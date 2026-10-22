@@ -26,7 +26,8 @@ Hot kernel. Evaluated in the Abel summation form
 the discrete analogue of \eqn{E X = \int S(x)\,dx}, so only one pass per
 mask is needed. Because the representatives are non-decreasing in t, the
 result lies in \eqn{[m_{0j}, m_{Tj}]} for any probabilities in \eqn{[0, 1]},
-monotone or not.
+monotone or not. Every entry whose mass sits in the top interval therefore
+gets \eqn{m_{Tj}}, whatever its own value; see \code{beta} in \code{\link[=predict.dfbm]{predict.dfbm()}}.
 
 Passing the binary masks themselves as \code{prob} returns each entry's own
 interval representative, which is the binned control.

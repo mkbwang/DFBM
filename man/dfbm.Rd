@@ -9,8 +9,9 @@ dfbm(
   alpha = NULL,
   levels = seq(0.05, 0.95, by = 0.1),
   zero_tol = 1e-12,
-  q_cap = 0.99,
+  q_cap = NULL,
   summary = c("mean", "median"),
+  beta = 0,
   alpha_grid = exp(seq(log(1), log(0.2), length.out = 10L)),
   loss = c("rps", "mse", "crps"),
   n_splits = 5L,
@@ -35,6 +36,12 @@ nonnegative, no missing values}
 \item{levels, zero_tol, q_cap}{threshold settings, see \code{\link[=choose_thresholds]{choose_thresholds()}}}
 
 \item{summary}{interval summary, see \code{\link[=interval_values]{interval_values()}}}
+
+\item{beta}{how far each entry's observed interval is represented by the
+entry's own capped value instead of the interval summary, in \eqn{[0, 1]};
+0 (default) is the plain survival expectation. Not tuned here, see
+\code{\link[=predict.dfbm]{predict.dfbm()}}. Stored in the object as the default for
+\code{\link[=predict.dfbm]{predict.dfbm()}}}
 
 \item{alpha_grid}{grid searched when \code{alpha} is \code{NULL}}
 
@@ -65,7 +72,7 @@ cross-validation splits reproducible}
 \value{
 an object of class \code{"dfbm"}: the fitted settings (\code{thresholds},
 \code{cap}, \code{levels}, \code{cap_level}, \code{zero_frac}, \code{zero_tol}, the
-representatives \code{M}, \code{summary}, \code{close}, \code{tol}, \code{colnames}), the
+representatives \code{M}, \code{summary}, \code{beta}, \code{close}, \code{tol}, \code{colnames}), the
 factorization \code{fit} with its \code{alpha} and, when tuned, \code{cv} (the per-alpha
 validation losses of \code{\link[=cv.bmfsvt]{cv.bmfsvt()}}), the
 misfit cutoff \code{row_ce_cut}, \code{insample_gap} (mean and max absolute
@@ -90,8 +97,9 @@ chosen by \code{\link[=cv.bmfsvt]{cv.bmfsvt()}}, giving
      = m_{0j} + \sum_{t=1}^{T} S^{(t)}_{ij}(m_{tj} - m_{t-1,j}),}
 with \eqn{S^{(0)} = 1} and \eqn{S^{(T+1)} = 0}, an estimate of
 \eqn{E\min(A_{ij}, c_j)}. It is positive wherever \eqn{m_{1j} > m_{0j}},
-so zeros are filled in, and it never exceeds \eqn{c_j}, so outliers are
-capped. An entry's own magnitude never enters, only its masks.
+so zeros are filled in, and it lies in \eqn{[m_{0j}, m_{Tj}]}, so outliers
+are capped. An entry's own magnitude never enters, only its masks.
+\item with \code{beta > 0}, the within-interval correction of \code{\link[=predict.dfbm]{predict.dfbm()}};
 \item optionally, closure to unit row sums.
 }
 

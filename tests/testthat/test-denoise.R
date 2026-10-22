@@ -207,3 +207,62 @@ test_that("predict.dfbm reproduces the training output and checks columns", {
   expect_error(predict(obj, A[, 6:1]), "order")
   expect_error(predict(obj, A[, 1:5]), "columns")
 })
+
+
+test_that("observed_bin_prob is the mass on the observed interval", {
+  A <- make_composition(n = 60, P = 5)
+  Y <- make_masks(A, choose_thresholds(A, levels = c(0.2, 0.5, 0.8)))
+  expect_equal(DFBM:::observed_bin_prob(Y, Y), matrix(1, 60, 5))
+
+  set.seed(2)
+  S <- lapply(c(0.9, 0.6, 0.2), function(p) matrix(p * runif(300), 60, 5))
+  S <- Reduce(function(a, b) pmin(a, b), S, accumulate = TRUE)  # monotone in t
+  Sx <- c(list(matrix(1, 60, 5)), S, list(matrix(0, 60, 5)))
+  k <- Reduce(`+`, Y)
+  direct <- matrix(0, 60, 5)
+  for (b in 0:3) direct <- direct + (k == b) * (Sx[[b + 1]] - Sx[[b + 2]])
+  expect_equal(DFBM:::observed_bin_prob(S, Y), direct)
+})
+
+
+test_that("beta moves the observed interval toward the capped value", {
+  A <- make_composition(n = 80, P = 6)
+  A[1:40, 6] <- 0
+  obj <- dfbm(A, alpha = 0.5, levels = c(0.1, 0.4, 0.7, 0.9), seed = 3,
+              C = 5L, max_iter = 200L, svd_method = "full", close = FALSE)
+  expect_equal(obj$beta, 0)
+  xt <- pmin(A, rep(obj$cap, each = 80))
+
+  # beta = 0 is the plain survival expectation.
+  expect_equal(predict(obj, A, beta = 0)$denoised,
+               DFBM:::survival_expectation(obj$prob, obj$M),
+               ignore_attr = TRUE)
+
+  # On the masks themselves pi_obs = 1, so beta = 1 returns the capped value.
+  Y <- make_masks(A, obj$thresholds)
+  bin <- DFBM:::survival_expectation(Y, obj$M)
+  snap <- bin + DFBM:::observed_bin_prob(Y, Y) * (xt - bin)
+  expect_equal(snap, xt, ignore_attr = TRUE)
+
+  for (b in c(0.5, 1)) {
+    out <- predict(obj, A, beta = b)$denoised
+    expect_true(all(out >= 0))
+    expect_true(all(out <= rep(obj$cap, each = 80) + 1e-12))
+    # Zeros of a zero-heavy column keep their filled-in value.
+    expect_equal(out[1:40, 6], obj$denoised[1:40, 6])
+  }
+  # The weight is stored and used as predict's default.
+  obj1 <- dfbm(A, alpha = 0.5, levels = c(0.1, 0.4, 0.7, 0.9), seed = 3,
+               C = 5L, max_iter = 200L, svd_method = "full", close = FALSE,
+               beta = 1)
+  expect_equal(obj1$denoised, predict(obj, A, beta = 1)$denoised)
+  expect_error(predict(obj, A, beta = 2), "beta")
+})
+
+
+test_that("q_cap defaults past levels refined in the tail", {
+  A <- make_composition(n = 400, P = 4)
+  expect_equal(unname(choose_thresholds(A)$cap_level), rep(0.99, 4))
+  th <- choose_thresholds(A, levels = c(seq(0.05, 0.95, by = 0.1), 0.975, 0.99))
+  expect_equal(unname(th$cap_level), rep(0.995, 4))
+})
