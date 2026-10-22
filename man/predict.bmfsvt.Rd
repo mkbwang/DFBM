@@ -7,7 +7,7 @@
 \method{predict}{bmfsvt}(object, newdata, tol = 1e-06, max_iter = 2000L, ...)
 }
 \arguments{
-\item{object}{a fit from \code{\link[=bmfsvt]{bmfsvt()}}, e.g. \code{tune.bmfsvt(...)$fit}}
+\item{object}{a fit from \code{\link[=bmfsvt]{bmfsvt()}}, e.g. \code{cv.bmfsvt(...)$fit}}
 
 \item{newdata}{a list of T binary n x P matrices or an n x P x T array. The
 masks must be built with the \strong{training} thresholds, so that mask t means
@@ -41,21 +41,12 @@ new rows' scores are solved for, by the ridge problem in \code{\link[=foldin_row
 Nothing is shared across new rows, so each is denoised on its own, the way a
 principal component projection treats a new sample.
 
-\strong{Why this is the fit's own map.} With \eqn{B} fixed the training problem
-separates by row, and the stationarity condition of each row's ridge problem,
-\eqn{\Psi_t V_t = -\lambda_t U_t}, is exactly the nuclear norm optimality
-condition. Folding the training rows back into an unclipped fit therefore
-reproduces \code{fit$X} up to solver tolerance. Under squared error loss the same
-construction has the closed form \eqn{c_r = d_r/(d_r + \lambda)(V^\top x)_r}:
-project onto \code{V}, then shrink each component. Logistic loss has no closed
-form, hence the iterative solve.
-
-\strong{Clipping is applied after solving, not during.} When \code{object} was fitted
-with \code{clip = TRUE}, the increments are capped at \eqn{-\nu_t} once the ridge
-problem is solved. Clipping inside the iterations would make each row's
-problem non-convex. The in-sample fit clips inside its iterations, so on
-training rows the two differ slightly (3.5e-5 mean absolute probability on
-the HRS data).
+\strong{Clipping is applied after solving, not during.} The increments are capped
+at \eqn{-\nu_t} once the ridge problem is solved, so the fitted
+probabilities are non-increasing across thresholds. Clipping inside the
+iterations would make each row's problem non-convex. The in-sample fit clips
+inside its iterations, so on training rows the two differ slightly; \code{\link[=dfbm]{dfbm()}}
+reports the difference as \code{insample_gap}.
 
 \strong{What the fold-in cannot do.} A row can only be expressed through the
 column patterns in \code{V}, which are shared across the training population. An

@@ -13,14 +13,10 @@ bmfsvt(
   max_iter = 200L,
   tol = 1e-05,
   gamma = 1.1,
-  L_rewind = gamma,
   delta = 1e-06,
   rank_init = 5L,
   rank_max = NULL,
   rank_step = 2L,
-  clip = TRUE,
-  offset = c("scalar", "column"),
-  L_init = c("stacked", "single", "worst"),
   restart = c("gradient", "function", "none"),
   svd_method = c("auto", "full", "svds"),
   track_objective = c("approx", "exact", "none"),
@@ -37,41 +33,28 @@ matrix with an increasing threshold sequence.}
 
 \item{train}{optional N x P 0/1 matrix, 1 marking the entries that enter the
 likelihood, shared by every mask. \code{NULL} (the default) uses every entry.
-Held-out entries are excluded from the gradient (line 21 of Algorithm 2),
-from \eqn{f} and \eqn{Q} in the backtracking test (line 38), from the
-offsets and from the default noise floor, but they are still clipped (line
-27) and receive fitted probabilities, imputed from the low-rank blocks. This
+Held-out entries are excluded from the gradient,
+from \eqn{f} and \eqn{Q} in the backtracking test, from the
+offsets and from the default noise floor, but they are still clipped
+and receive fitted probabilities, imputed from the low-rank blocks. This
 is what \code{\link[=cv.bmfsvt]{cv.bmfsvt()}} scores.}
 
 \item{lambda}{shrinkage parameter for each mask; a scalar is recycled. When
 \code{NULL} the value \code{alpha * lambda_star_seq(Y, C)} is used.}
 
 \item{alpha}{shrinkage relative to the \strong{noise floor} \code{\link[=lambda_star_seq]{lambda_star_seq()}},
-used only when \code{lambda} is \code{NULL}. Section 2.2 of the method note puts the
-search range at \eqn{\alpha \in (0, 1]}, with \code{alpha = 1} thresholding
-exactly at the floor.
+used only when \code{lambda} is \code{NULL}.
+The search range is \eqn{\alpha \in (0, 1]}, with \code{alpha = 1} thresholding
+exactly at the floor.}
 
-\strong{This changed meaning.} It was formerly a multiplier on
-\code{\link[=lambda_max_seq]{lambda_max_seq()}}, where the useful values sat near 0.3-0.6; it is now a
-multiplier on \code{\link[=lambda_star_seq]{lambda_star_seq()}}, where the measured optimum is about
-\strong{0.55} (argmin in 6 of 6 pilot cells, two shapes x three seeds). A value
-carried over from the old parameterization will be wrong, not merely
-suboptimal.}
-
-\item{C}{pure noise replicates used by \code{\link[=lambda_star_seq]{lambda_star_seq()}}, used only when
-\code{lambda} is \code{NULL}.}
+\item{C}{pure noise replicates for estimating noise floor used by \code{\link[=lambda_star_seq]{lambda_star_seq()}},
+used only when \code{lambda} is \code{NULL}.}
 
 \item{max_iter}{maximum number of outer FISTA iterations.}
 
 \item{tol}{relative change in \code{Z} below which the algorithm stops.}
 
 \item{gamma}{step size increment ratio for backtracking.}
-
-\item{L_rewind}{factor by which the Lipschitz constants are optimistically
-relaxed at the start of each iteration. The method note rewinds by \code{gamma},
-which keeps the step size adaptive but costs roughly one extra backtrack
-per iteration, and every backtrack repeats all T decompositions. Set to 1
-to make the constants non decreasing and trade adaptivity for speed.}
 
 \item{delta}{small constant stabilizing the relative convergence criterion.}
 
@@ -80,28 +63,6 @@ to make the constants non decreasing and trade adaptivity for speed.}
 \item{rank_max}{largest rank retained for any block; \code{NULL} means no limit.}
 
 \item{rank_step}{how many ranks to add when the partial SVD was too small.}
-
-\item{clip}{whether to enforce the monotonicity restriction by clipping the
-SVT outcome. Setting this to \code{FALSE} solves the unconstrained stacked
-problem, which is useful as a reference for how hard the constraint binds.}
-
-\item{offset}{\code{"scalar"} uses one unpenalized offset per mask,
-\eqn{\mu_t = \mathrm{logit}(\bar Y^{(t)})}, as in the method note.
-\code{"column"} uses one per mask \strong{and column},
-\eqn{\mu_{tj} = \mathrm{logit}(\bar Y^{(t)}_{\cdot j})}, so \code{mu} becomes a
-T x P matrix and \code{nu} a (T-1) x P matrix. Use \code{"column"} whenever column
-prevalences differ strongly: a column main effect is expensive for a
-nuclear-norm penalized block to absorb, and on the HRS composition data the
-scalar offsets fitted a column that is 49\% nonzero at 0.81 on average. When
-the masks come from per-column quantile thresholds the column prevalences
-are identical except for zero-heavy columns, so the two settings then
-coincide everywhere else. \code{\link[=lambda_star_seq]{lambda_star_seq()}} and the Cp variance stay
-pooled under either setting.}
-
-\item{L_init}{how to initialize the Lipschitz constants. \code{"stacked"} uses
-\eqn{\sum_{t' \ge t} \pi_{t'}(1-\pi_{t'})}, \code{"single"} reproduces the
-method note exactly with \eqn{\pi_t(1-\pi_t)}, \code{"worst"} uses the
-conservative bound \eqn{(T-t)/4}.}
 
 \item{restart}{FISTA restart scheme, one of \code{"gradient"}, \code{"function"},
 \code{"none"}.}
@@ -127,10 +88,9 @@ a list with components
 \item{prob}{list of T matrices, \eqn{\sigma(X^{(t)})}, the estimated
 marginal probability that an entry exceeds threshold t}
 \item{Z}{list of T increment matrices actually optimized}
-\item{mu, nu}{offsets and offset increments: vectors of length T and
-T-1 under \code{offset = "scalar"}, T x P and (T-1) x P matrices under
-\code{"column"}}
-\item{offset}{which offset parameterization was used}
+\item{mu, nu}{column offsets and their increments across thresholds,
+a T x P and a (T-1) x P matrix}
+\item{pi}{prevalence of each mask over the training entries, length T}
 \item{V}{list of T \verb{P x ranks[t]} matrices of right singular vectors
 paired with \code{dvals}. Like \code{dvals} they describe the thresholded block
 before clipping. Used by \code{\link[=predict.bmfsvt]{predict.bmfsvt()}} to fold in new rows.}
@@ -138,23 +98,19 @@ before clipping. Used by \code{\link[=predict.bmfsvt]{predict.bmfsvt()}} to fold
 \item{ranks}{retained rank of each block}
 \item{dvals}{retained singular values of each block after shrinkage, as
 produced by the final thresholding step and therefore measured before
-clipping, matching the \code{"approx"} convention of \code{\link[=nuclear_penalty]{nuclear_penalty()}}.
-Supplied so that \code{\link[=svt_df]{svt_df()}} never has to recompute a decomposition.}
-\item{b, d}{violation rate and maximum violation margin of an unclipped
-proximal step taken from the solution, for t = 1..T-1}
-\item{obj_trace, clip_frac_trace}{objective and clipped-entry fraction by
-iteration}
-\item{n_iter, n_svd, n_backtrack, converged}{solver diagnostics}
-\item{n_train}{number of entries per mask that entered the likelihood}
+clipping, matching the \code{"approx"} convention of \code{\link[=nuclear_penalty]{nuclear_penalty()}}.}
+\item{obj_trace}{objective by iteration, empty when
+\code{track_objective = "none"}}
+\item{n_iter, converged}{solver diagnostics}
 }
 }
 \description{
-Implements the Clip-SVT algorithm (Algorithm 2 of the method note): all
+Implements the Clip-SVT algorithm: all
 binary masks are factorized together under one objective, optimized by FISTA
 with backtracking and block-wise singular value thresholding.
 }
 \details{
-The parameterization follows section 2.2. With
+The parameterization follows
 \eqn{X^{(t)} = X^{(0)} + \sum_{t' \le t} H^{(t')}} and \eqn{H^{(t)} \le 0},
 writing \eqn{Z^{(0)} = X^{(0)} - \mu_0} and \eqn{Z^{(t)} = H^{(t)} - \nu_t}
 gives \eqn{X^{(t)} = \mu_t + \sum_{t' \le t} Z^{(t')}} because the offsets
@@ -162,16 +118,10 @@ telescope. The gradient with respect to \eqn{Z^{(t)}} is therefore the
 reverse cumulative sum \eqn{\sum_{t' \ge t}[\sigma(X^{(t')}) - Y^{(t')}]},
 and the monotonicity restriction becomes \eqn{Z^{(t)} \le -\nu_t}.
 
-Unlike the conditional formulation used by \code{\link[=logisticcfR]{logisticcfR()}}, every observed
-entry contributes to the likelihood of every mask. The set of entries
-informing the fit does not shrink as thresholds grow.
-
-A single mask (\code{T = 1}) reduces this to Algorithm 1.
-
 The returned object has class \code{"bmfsvt"}.
 }
 \seealso{
-\code{\link[=cv.bmfsvt]{cv.bmfsvt()}} and \code{\link[=tune.bmfsvt]{tune.bmfsvt()}} for choosing \code{alpha},
+\code{\link[=cv.bmfsvt]{cv.bmfsvt()}} for choosing \code{alpha},
 \code{\link[=lambda_star_seq]{lambda_star_seq()}} for the shrinkage scale, \code{\link[=predict.bmfsvt]{predict.bmfsvt()}} for new
 rows.
 }

@@ -79,18 +79,15 @@ test_that("held-out entries have no influence on the fit", {
   W <- train_mask_generation(Y[[1]], prop = 0.8, seed = 4)
   # Overwrite every held-out entry with a different nested pattern.
   Y2 <- lapply(Y, function(m) { m[W == 0] <- 0; m })
-  for (offset in c("scalar", "column")) {
-    # Both draw lambda_star from the global stream; reset it between them.
-    set.seed(1)
-    a <- bmfsvt(Y, train = W, alpha = 0.5, C = 5L, max_iter = 100L,
-                offset = offset, svd_method = "full")
-    set.seed(1)
-    b <- bmfsvt(Y2, train = W, alpha = 0.5, C = 5L, max_iter = 100L,
-                offset = offset, svd_method = "full")
-    expect_identical(a$X, b$X)
-    expect_identical(a$mu, b$mu)
-    expect_equal(a$n_train, sum(W))
-  }
+  # Both draw lambda_star from the global stream; reset it between them.
+  set.seed(1)
+  a <- bmfsvt(Y, train = W, alpha = 0.5, C = 5L, max_iter = 100L,
+              svd_method = "full")
+  set.seed(1)
+  b <- bmfsvt(Y2, train = W, alpha = 0.5, C = 5L, max_iter = 100L,
+              svd_method = "full")
+  expect_identical(a$X, b$X)
+  expect_identical(a$mu, b$mu)
 })
 
 
@@ -185,7 +182,6 @@ test_that("cv.bmfsvt selects a grid alpha and refits on every entry", {
   expect_equal(dim(cv$loss_matrix$rps), c(2L, 3L))
   expect_equal(dim(cv$lambda_star_splits), c(2L, 3L))
   expect_true(all(cv$lambda_star_splits < rep(cv$lambda_star, each = 2)))
-  expect_equal(cv$fit$n_train, 80 * 15)
   expect_equal(cv$fit$lambda, cv$alpha * cv$lambda_star)
 
   # Reproducible, and the same whether split over cores or not.

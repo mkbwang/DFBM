@@ -1,20 +1,23 @@
 Package: DFBM
-Title: Denoising omics count matrices by factorizing binary masks
+Title: Denoising abundance matrices by factorizing binary masks
 Version: 0.0.0.9000
 Authors@R: 
     person("Mukai", "Wang", , "wangmk@umich.edu", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-1413-1904"))
-Description: This is a nonparametric denoising method that applies to sequencing count matrices such as microbiome metagenomics and single cell sequencing. The novelty of this method is to dichitomize a count matrix into binary masks with a sequence of thresholds, then apply logistic collaborative filtering to estimate a probability matrix for each binary mask. These probabilities set up an empirical CDF for each entry. The expected count is then estimated based on the empirical distribution.
+Description: A nonparametric denoising method for nonnegative abundance matrices
+    (samples by features). Each column is dichotomized into a nested sequence of
+    binary masks at its own quantile thresholds. The masks are factorized jointly
+    into low-rank probability matrices by proximal gradient descent with singular
+    value thresholding, giving each entry an estimated survival curve over the
+    thresholds. The denoised value is the capped expectation implied by that
+    curve, which fills in zeros and caps extreme values. New samples are
+    denoised with the fitted factors, without refitting.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
 Imports:
-  doParallel(>= 1.0.0),
-  foreach(>= 1.5.2),
   parallel,
-  dplyr(>= 1.1.4),
-  parallelly(>= 1.38.0),
   RSpectra(>= 0.16.0),
   stats
 Suggests:

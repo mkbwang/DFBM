@@ -25,8 +25,8 @@ Hot kernel. Because \eqn{X^{(t')}} depends on \eqn{Z^{(t)}} for every
 \eqn{t' \ge t}, the gradient with respect to \eqn{Z^{(t)}} is a reverse
 cumulative sum, computed here in a single backward pass.
 
-With \code{train}, held-out entries contribute a zero residual (line 21 of
-Algorithm 2 restricted to the training entries). The proximal step then
-leaves them at the current low-rank fit, so they are imputed as in softImpute.
+With \code{train}, held-out entries contribute a zero residual. The proximal step
+then leaves them at the current low-rank fit, so they are imputed as in
+softImpute.
 }
 \keyword{internal}

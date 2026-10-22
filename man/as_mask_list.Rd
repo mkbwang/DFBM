@@ -18,9 +18,8 @@ a list of T numeric matrices
 Coerce a stack of binary masks into a list of matrices
 }
 \details{
-The model in section 2.2 assumes the masks come from thresholding one
-abundance matrix, hence \eqn{Y^{(0)} \ge Y^{(1)} \ge \cdots}. A stack that
+We need \eqn{Y^{(0)} \ge Y^{(1)} \ge \cdots}. A stack that
 violates nesting is not merely unusual, it invalidates the parameterization
-\eqn{H^{(t)} \le 0}, so we stop rather than warn.
+\eqn{H^{(t)} \le 0}, so we need to verify it.
 }
 \keyword{internal}

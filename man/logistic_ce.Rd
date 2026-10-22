@@ -2,7 +2,7 @@
 % Please edit documentation in R/svt_utils.R
 \name{logistic_ce}
 \alias{logistic_ce}
-\title{Penalized cross entropy of one binary mask}
+\title{Cross entropy of one binary mask}
 \usage{
 logistic_ce(X, Y, train = NULL)
 }
@@ -18,7 +18,7 @@ enter the likelihood; \code{NULL} uses every entry}
 the summed negative log likelihood over the training entries
 }
 \description{
-Penalized cross entropy of one binary mask
+Cross entropy of one binary mask
 }
 \details{
 Hot kernel. Written as \eqn{-YX + \log(1+e^X)} so that \code{\link[=log1exp]{log1exp()}} handles the

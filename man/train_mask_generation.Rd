@@ -4,16 +4,12 @@
 \alias{train_mask_generation}
 \title{Balanced split of the entries of a matrix into training and validation}
 \usage{
-train_mask_generation(X, prop = 0.8, margin = 0.02, seed = NULL)
+train_mask_generation(X, prop = 0.8, seed = NULL)
 }
 \arguments{
 \item{X}{a matrix or data frame; only its dimensions are used}
 
 \item{prop}{proportion of each column assigned to training}
-
-\item{margin}{unused. Kept so that calls written for the earlier linear
-programming version still run: the construction below balances rows more
-tightly than any margin that version accepted.}
 
 \item{seed}{optional integer; makes the split reproducible without
 disturbing the caller's random number stream}
@@ -39,8 +35,4 @@ holds out the rows that have so far been held out least often, with ties
 broken at random. If all row counts are \code{c} or \code{c + 1} before a column is
 processed, they are all \code{c}, \code{c + 1} or \code{c + 2} after, and the smallest
 value is gone whenever \code{c + 2} appears. So the spread never exceeds one.
-
-It replaces a 0/1 linear program whose dense constraint matrix has
-\eqn{2(N+P) \times NP} entries, about 31 GB at the HRS training shape
-(6212 x 25). This version needs O(NP) memory and O(NP log N) time.
 }

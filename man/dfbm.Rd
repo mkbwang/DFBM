@@ -15,7 +15,6 @@ dfbm(
   loss = c("rps", "mse", "crps"),
   n_splits = 5L,
   train_prop = 0.8,
-  offset = c("column", "scalar"),
   close = TRUE,
   flag_prob = 0.999,
   C = 20L,
@@ -31,8 +30,7 @@ nonnegative, no missing values}
 \item{alpha}{\code{NULL} to choose the shrinkage by entry-wise cross-validation,
 \code{\link[=cv.bmfsvt]{cv.bmfsvt()}}, or a single number to skip tuning and fit once at
 \eqn{\lambda = \alpha \lambda^*}. A fixed \code{alpha} costs one fit instead of
-\code{n_splits} whole paths and is meant for a quick first look; the measured
-optimum in simulation is about 0.585.}
+\code{n_splits} whole paths and is meant for a quick first look}
 
 \item{levels, zero_tol, q_cap}{threshold settings, see \code{\link[=choose_thresholds]{choose_thresholds()}}}
 
@@ -47,10 +45,6 @@ divided by its own standard deviation. All three are reported in \code{cv}.}
 
 \item{n_splits, train_prop}{number of train/validation splits and the
 training proportion of each row and column, see \code{\link[=cv.bmfsvt]{cv.bmfsvt()}}}
-
-\item{offset}{offset parameterization passed to \code{\link[=bmfsvt]{bmfsvt()}}. \code{"column"} is the
-default here because zero-heavy columns have prevalences far from the
-others.}
 
 \item{close}{whether to divide each denoised row by its sum, for
 compositional data}
@@ -70,7 +64,7 @@ cross-validation splits reproducible}
 }
 \value{
 an object of class \code{"dfbm"}: the fitted settings (\code{thresholds},
-\code{cap}, \code{levels}, \code{cap_level}, \code{zero_frac}, \code{zero_tol}, \code{base_levels}, the
+\code{cap}, \code{levels}, \code{cap_level}, \code{zero_frac}, \code{zero_tol}, the
 representatives \code{M}, \code{summary}, \code{close}, \code{tol}, \code{colnames}), the
 factorization \code{fit} with its \code{alpha} and, when tuned, \code{cv} (the per-alpha
 validation losses of \code{\link[=cv.bmfsvt]{cv.bmfsvt()}}), the
@@ -118,7 +112,7 @@ the effect of the factorization from that of binning and capping.
 \strong{Rows with a unique profile are erased, not merely capped, so they are
 flagged.} Every row is expressed through column patterns shared by the
 training population. A single row contributes at most
-\eqn{\sqrt{P}(T - t + 1)} to the gradient of block t, which on the HRS data is
+\eqn{\sqrt{P}(T - t + 1)} to the gradient of block t, which is typically
 well below \eqn{\lambda_t}, so no pattern carried by one sample can enter the
 fit. \code{row_ce} measures how badly a row's fitted probabilities match its own
 masks and \code{flag} marks rows above the training \code{flag_prob} quantile; the

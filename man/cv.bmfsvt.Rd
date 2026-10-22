@@ -27,7 +27,7 @@ cv.bmfsvt(
 \item{Y}{a list of T binary matrices, or an N x P x T array}
 
 \item{alpha_grid}{shrinkage levels relative to the noise floor
-\code{\link[=lambda_star_seq]{lambda_star_seq()}}, as in \code{\link[=tune.bmfsvt]{tune.bmfsvt()}}; sorted decreasing internally so
+\code{\link[=lambda_star_seq]{lambda_star_seq()}}; sorted decreasing internally so
 that each fit warm starts the next}
 
 \item{loss}{validation loss that selects \code{alpha}: \code{"rps"}, \code{"mse"} or
@@ -47,11 +47,10 @@ together with \code{thresholds} and \code{cap}, for \code{"mse"} and \code{"crps
 \item{thresholds, cap}{the T x P thresholds and length P caps the masks were
 built with, as returned by \code{\link[=choose_thresholds]{choose_thresholds()}}}
 
-\item{summary}{interval summary for the representatives, see
-\code{\link[=interval_values]{interval_values()}}}
+\item{summary}{interval summary for the representatives, \code{"mean"} or \code{"median"}}
 
 \item{rule}{\code{"min"} selects the alpha with the smallest mean validation loss;
-\code{"1se"} the strongest shrinkage within one standard error of it}
+\code{"1se"} the strongest shrinkage (largest alpha) within one standard error of it}
 
 \item{C}{pure noise replicates for \code{\link[=lambda_star_seq]{lambda_star_seq()}}}
 
@@ -62,7 +61,7 @@ whole selection reproducible}
 
 \item{verbose}{whether to report progress}
 
-\item{...}{further arguments passed to \code{\link[=bmfsvt]{bmfsvt()}}, e.g. \code{offset}}
+\item{...}{further arguments passed to \code{\link[=bmfsvt]{bmfsvt()}}}
 }
 \value{
 a list with
@@ -95,12 +94,7 @@ every entry, since none of the split fits saw the whole matrix.
 \strong{Each split has its own noise floor.} A split's \code{lambda} is
 \code{alpha * lambda_star_seq(Y, train = W)}, the floor of the gradient restricted
 to its training entries, while the refit uses \code{alpha} times the full-data
-floor. Holding out a fraction of the entries shrinks the noise gradient by
-about the square root of the training fraction. Anchoring the split fits on
-the full-data floor would shrink them about \code{1/train_prop} times harder than
-the refit at the same \code{alpha}, more than one grid step at 0.8. Some mismatch
-remains, of the order of the held-out fraction, so a larger \code{train_prop}
-transfers better at the cost of a noisier loss.
+floor.
 
 \strong{The losses.} With \eqn{S_t} the fitted survival probabilities of a
 held-out entry and \eqn{Y_t} its masks:
@@ -128,21 +122,10 @@ The thresholds themselves are taken as given, i.e. chosen on all rows. They
 fix only within-column ranks and are the same for every alpha, so they cannot
 favour one alpha over another.
 
-\strong{Held-out selection has been measured to under-shrink.} An earlier
-held-out Brier criterion on the masks, which is \code{"rps"} here, landed on
-average +0.75 grid steps from the oracle (+8.2\% RMSE). That was measured
-under the superseded \code{lambda_max} anchor with unbalanced splits, so it needs
-re-measuring, but the mechanism is structural. The fit is scored only on
-entries it did not see, whereas the output of interest includes the entries
-it did. The \code{"1se"} rule was measured to cancel that bias only by
-coincidence, so \code{"min"} is the default.
-
 \strong{Parallelism.} Splits are independent and are forked with
 \code{parallel::mclapply}. Their seeds are drawn in the parent, so serial and
-parallel runs agree exactly. Pin the BLAS to one thread before forking; see
-\code{experiment/run.sh}.
+parallel runs agree exactly. Pin the BLAS to one thread before forking
 }
 \seealso{
-\code{\link[=tune.bmfsvt]{tune.bmfsvt()}} for selection without holding entries out,
 \code{\link[=train_mask_generation]{train_mask_generation()}} for the splits.
 }

@@ -27,19 +27,14 @@ Noise floor shrinkage parameter for each binary mask
 \details{
 \eqn{\lambda^*_t = \frac{1}{C}\sum_c \| \sum_{t' \ge t}
 (\pi_{t'} - Y^{(t')c*}) \|_2}, the spectral norm of the same gradient
-evaluated on a stack carrying \emph{no signal}. Section 2.2 of the method note.
+evaluated on a stack carrying \emph{no signal}.
 The search range is \eqn{\lambda_t = \alpha \lambda^*_t} with
 \eqn{\alpha \in (0, 1]}.
 
 \strong{The noise stack must be nested, and one shared uniform per entry is what
 makes it so.} Drawing \eqn{U_{ij} \sim U(0,1)} once and setting
 \eqn{Y^{(t')c*}_{ij} = I[U_{ij} < \pi_{t'}]} for every \eqn{t'} gives
-\eqn{Y^{(0)c*} \ge Y^{(1)c*} \ge \cdots} automatically. Drawing each mask
-independently would break the nesting and understate the floor: the shared
-uniform makes the residuals positively correlated across \eqn{t'}, so their
-variances do not simply add. Measured, an independent-entry analytic floor
-\eqn{\sqrt{\sum_{t' \ge t}\pi(1-\pi)}(\sqrt N + \sqrt P)} is 1.1x to 2.1x too
-small, the gap widening toward the dense head where more terms are summed.
+\eqn{Y^{(0)c*} \ge Y^{(1)c*} \ge \cdots} automatically.
 
 \code{C = 20} is ample and does not need tuning. The spectral norm of a random
 matrix has Tracy-Widom fluctuations of order \eqn{N^{-1/6}} (about 2\% at
@@ -56,7 +51,4 @@ of the problem's own noise level. See \code{\link[=cv.bmfsvt]{cv.bmfsvt()}}.
 Cost is \code{C} partial decompositions per threshold, paid \strong{once per data set}:
 the whole \eqn{\alpha} grid rescales the same vector, so this must not be
 called per candidate.
-}
-\seealso{
-\code{\link[=lambda_max_seq]{lambda_max_seq()}} for the upper bound
 }

@@ -163,12 +163,11 @@ test_that("dfbm fits with a fixed alpha and returns closed positive compositions
   expect_s3_class(obj, "dfbm")
   expect_null(obj$cv)
   expect_equal(obj$alpha, 0.5)
-  expect_equal(obj$fit$offset, "column")
 
   # The fixed mode is exactly one bmfsvt() call at alpha * lambda_star.
   Y <- make_masks(A, obj$thresholds)
   ref <- bmfsvt(Y, lambda = 0.5 * lambda_star_seq(Y, C = 5L, seed = 3),
-                offset = "column", max_iter = 200L, svd_method = "full")
+                max_iter = 200L, svd_method = "full")
   expect_equal(obj$fit$prob, ref$prob)
 
   expect_equal(unname(rowSums(obj$denoised)), rep(1, 80))
