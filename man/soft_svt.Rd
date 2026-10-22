@@ -50,8 +50,7 @@ performed \code{n_svd}
 Adaptive rank soft thresholded singular value decomposition
 }
 \details{
-Follows the softImpute prescription referenced at the end of section 2.2:
-compute a partial SVD of size \code{rank_guess}, and if its smallest singular
+Follows the softImpute prescription: compute a partial SVD of size \code{rank_guess}, and if its smallest singular
 value still exceeds \code{thresh} the truncation discarded signal, so widen the
 guess and refit. The returned \code{rank_next} warm starts the next outer
 iteration.

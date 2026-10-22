@@ -1,8 +1,7 @@
 
 # Entry-wise cross-validation for the shrinkage level of bmfsvt(): balanced
 # train/validation splits of the entries, validation losses on the held-out
-# entries, and cv.bmfsvt() itself. Independent of tune.bmfsvt(), which selects
-# alpha without holding anything out.
+# entries, and cv.bmfsvt() itself.
 
 
 #' Evaluate an expression under a fixed seed without touching the caller's RNG
@@ -35,9 +34,6 @@ with_seed <- function(seed, expr) {
 #'
 #' @param X a matrix or data frame; only its dimensions are used
 #' @param prop proportion of each column assigned to training
-#' @param margin unused. Kept so that calls written for the earlier linear
-#'   programming version still run: the construction below balances rows more
-#'   tightly than any margin that version accepted.
 #' @param seed optional integer; makes the split reproducible without
 #'   disturbing the caller's random number stream
 #' @returns an N x P matrix of 0/1, 1 marking training entries and 0 validation
@@ -58,13 +54,10 @@ with_seed <- function(seed, expr) {
 #' processed, they are all `c`, `c + 1` or `c + 2` after, and the smallest
 #' value is gone whenever `c + 2` appears. So the spread never exceeds one.
 #'
-#' It replaces a 0/1 linear program whose dense constraint matrix has
-#' \eqn{2(N+P) \times NP} entries, about 31 GB at the HRS training shape
-#' (6212 x 25). This version needs O(NP) memory and O(NP log N) time.
 #'
 #' @importFrom stats runif
 #' @export
-train_mask_generation <- function(X, prop = 0.8, margin = 0.02, seed = NULL) {
+train_mask_generation <- function(X, prop = 0.8, seed = NULL) {
   if (is.data.frame(X)) X <- as.matrix(X)
   if (!is.matrix(X)) stop("`X` must be a matrix or a data frame.")
   if (!is.numeric(prop) || length(prop) != 1L || !(prop > 0 && prop < 1)) {
@@ -82,9 +75,10 @@ train_mask_generation <- function(X, prop = 0.8, margin = 0.02, seed = NULL) {
   with_seed(seed, {
     train <- matrix(1, N, P)
     held <- numeric(N)
-    for (j in sample.int(P)) {
+    for (j in sample.int(P)) { # loop by columns
       # The uniform only breaks ties: it is below 1, so it never reorders rows
       # whose held-out counts differ.
+      # try to make sure the validation rows are different for every column
       idx <- order(held + stats::runif(N))[seq_len(n_val)]
       train[idx, j] <- 0
       held[idx] <- held[idx] + 1
@@ -106,9 +100,9 @@ train_mask_generation <- function(X, prop = 0.8, margin = 0.02, seed = NULL) {
 #'   entries, the last two `NA` when `values` is `NULL`
 #' @keywords internal
 cv_losses <- function(prob, Y, val, values = NULL) {
-  pv <- lapply(prob, function(p) p[val])
+  pv <- lapply(prob, function(p) p[val]) # validation entry probabilities
   rps <- 0
-  for (t in seq_along(pv)) rps <- rps + (pv[[t]] - Y[[t]][val])^2
+  for (t in seq_along(pv)) rps <- rps + (pv[[t]] - Y[[t]][val])^2 # mean square error of probability estimates
   out <- c(rps = mean(rps), mse = NA_real_, crps = NA_real_)
   if (!is.null(values)) {
     # One held-out entry per column of a 1 x n "matrix", so that each entry
@@ -126,7 +120,7 @@ cv_losses <- function(prob, Y, val, values = NULL) {
 #'
 #' @param Y a list of T binary matrices, or an N x P x T array
 #' @param alpha_grid shrinkage levels relative to the noise floor
-#'   [lambda_star_seq()], as in [tune.bmfsvt()]; sorted decreasing internally so
+#'   [lambda_star_seq()]; sorted decreasing internally so
 #'   that each fit warm starts the next
 #' @param loss validation loss that selects `alpha`: `"rps"`, `"mse"` or
 #'   `"crps"`. All that can be computed are reported whichever is chosen.
@@ -139,16 +133,15 @@ cv_losses <- function(prob, Y, val, values = NULL) {
 #'   together with `thresholds` and `cap`, for `"mse"` and `"crps"`.
 #' @param thresholds,cap the T x P thresholds and length P caps the masks were
 #'   built with, as returned by [choose_thresholds()]
-#' @param summary interval summary for the representatives, see
-#'   [interval_values()]
+#' @param summary interval summary for the representatives, `"mean"` or `"median"`
 #' @param rule `"min"` selects the alpha with the smallest mean validation loss;
-#'   `"1se"` the strongest shrinkage within one standard error of it
+#'   `"1se"` the strongest shrinkage (largest alpha) within one standard error of it
 #' @param C pure noise replicates for [lambda_star_seq()]
 #' @param ncores splits to fit in parallel; 1 runs serially
 #' @param seed optional seed making the splits, the noise floors and hence the
 #'   whole selection reproducible
 #' @param verbose whether to report progress
-#' @param ... further arguments passed to [bmfsvt()], e.g. `offset`
+#' @param ... further arguments passed to [bmfsvt()]
 #'
 #' @returns a list with
 #'   \describe{
@@ -177,12 +170,7 @@ cv_losses <- function(prob, Y, val, values = NULL) {
 #' **Each split has its own noise floor.** A split's `lambda` is
 #' `alpha * lambda_star_seq(Y, train = W)`, the floor of the gradient restricted
 #' to its training entries, while the refit uses `alpha` times the full-data
-#' floor. Holding out a fraction of the entries shrinks the noise gradient by
-#' about the square root of the training fraction. Anchoring the split fits on
-#' the full-data floor would shrink them about `1/train_prop` times harder than
-#' the refit at the same `alpha`, more than one grid step at 0.8. Some mismatch
-#' remains, of the order of the held-out fraction, so a larger `train_prop`
-#' transfers better at the cost of a noisier loss.
+#' floor.
 #'
 #' **The losses.** With \eqn{S_t} the fitted survival probabilities of a
 #' held-out entry and \eqn{Y_t} its masks:
@@ -210,22 +198,12 @@ cv_losses <- function(prob, Y, val, values = NULL) {
 #' fix only within-column ranks and are the same for every alpha, so they cannot
 #' favour one alpha over another.
 #'
-#' **Held-out selection has been measured to under-shrink.** An earlier
-#' held-out Brier criterion on the masks, which is `"rps"` here, landed on
-#' average +0.75 grid steps from the oracle (+8.2% RMSE). That was measured
-#' under the superseded `lambda_max` anchor with unbalanced splits, so it needs
-#' re-measuring, but the mechanism is structural. The fit is scored only on
-#' entries it did not see, whereas the output of interest includes the entries
-#' it did. The `"1se"` rule was measured to cancel that bias only by
-#' coincidence, so `"min"` is the default.
 #'
 #' **Parallelism.** Splits are independent and are forked with
 #' `parallel::mclapply`. Their seeds are drawn in the parent, so serial and
-#' parallel runs agree exactly. Pin the BLAS to one thread before forking; see
-#' `experiment/run.sh`.
+#' parallel runs agree exactly. Pin the BLAS to one thread before forking
 #'
-#' @seealso [tune.bmfsvt()] for selection without holding entries out,
-#'   [train_mask_generation()] for the splits.
+#' @seealso [train_mask_generation()] for the splits.
 #' @importFrom stats sd
 #' @export
 cv.bmfsvt <- function(Y,
@@ -259,7 +237,7 @@ cv.bmfsvt <- function(Y,
       stop("`A` and `thresholds` must match the masks: N x P and T x P.")
     }
     if (length(cap) != P) stop("`cap` must have one element per column.")
-    yc <- pmin(A, rep(cap, each = N))
+    yc <- pmin(A, rep(cap, each = N)) # cap the extremely large values before calculating standard deviation
     scale <- apply(yc, 2L, stats::sd)
     # A constant column has nothing to predict; any positive scale will do.
     scale[!(scale > 0)] <- 1

@@ -7,6 +7,7 @@
 \method{predict}{dfbm}(
   object,
   newdata,
+  beta = if (is.null(object$beta)) 0 else object$beta,
   close = object$close,
   tol = object$tol,
   max_iter = 2000L,
@@ -18,6 +19,9 @@
 
 \item{newdata}{abundance matrix with the same columns, in the same order, as
 the training matrix}
+
+\item{beta}{weight in \eqn{[0, 1]} of the entry's own capped value within
+its observed interval; see Details. Changing it needs no refit.}
 
 \item{close}{whether to close the denoised rows to unit sum}
 
@@ -48,4 +52,34 @@ Everything is taken from the training fit: thresholds, interval
 representatives, offsets, shrinkage and column factors. Each new row is
 denoised on its own by \code{\link[=predict.bmfsvt]{predict.bmfsvt()}}, so results for a row do not
 depend on which other rows are passed with it.
+
+\strong{Within-interval correction (\code{beta}).} The survival expectation
+\eqn{\hat A = \sum_k \pi_k m_k}, with \eqn{\pi_k = S^{(k)} - S^{(k+1)}},
+gives every entry whose mass sits in one interval the same value, so the
+top interval \eqn{(d_T, \infty)}, which holds most of a skewed column's
+spread, collapses to \eqn{m_T}. With \eqn{k} the entry's observed interval,
+\eqn{\tilde x = \min(x, c_j)} and \eqn{\pi^{obs} = \pi_k}
+(\code{\link[=observed_bin_prob]{observed_bin_prob()}}), the representative of the observed interval alone
+is moved toward the entry's own value:
+\deqn{\hat A_\beta = \hat A + \beta\, \pi^{obs} (\tilde x - m_k).}
+The thresholds fix the observed interval, the factorization decides how much
+mass stays on it, and \code{beta} how much of that mass is placed at the entry's
+own value. Properties:
+\itemize{
+\item \code{beta = 0} is the plain expectation; with \code{beta = 1} and
+\eqn{\pi^{obs} = 1} the result is \eqn{\tilde x}.
+\item The result stays in \eqn{[\min(m_{0j}, \tilde x), c_j]}, so the cap still
+holds; it is \eqn{c_j} rather than \eqn{m_{Tj}} that now bounds it.
+\item Zeros in a zero-heavy column have \eqn{\tilde x = m_0 = 0}, so filled-in
+zeros are unchanged.
+\item Entries the model moves out of their observed interval keep little of
+their own value, in proportion to \eqn{\pi^{obs}}.
+}
+
+\strong{\code{beta} is not chosen by \code{\link[=cv.bmfsvt]{cv.bmfsvt()}}, on purpose.} Its best value is set
+by how much of the within-interval spread is noise, which a single noisy
+copy of the data cannot reveal: a held-out entry's own value would be both
+input and target, and any such criterion drifts to \code{beta = 1}. Choose it by
+the downstream analysis, e.g. a grid such as \code{c(0, 0.5, 1)}, which costs one
+fold-in per value and no refit.
 }
