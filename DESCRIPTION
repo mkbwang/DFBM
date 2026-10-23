@@ -18,9 +18,13 @@ Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
 Imports:
   parallel,
+  Rcpp,
   RSpectra(>= 0.16.0),
   stats
+LinkingTo:
+  Rcpp
 Suggests:
+  RhpcBLASctl,
   rmarkdown (>= 2.11),
   knitr (>= 1.37),
   testthat (>= 3.0.0)

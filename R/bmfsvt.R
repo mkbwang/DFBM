@@ -170,7 +170,6 @@ bmfsvt <- function(Y, train = NULL, lambda = NULL, alpha = 0.55, C = 20L,
   }
   W <- Z
   mu0 <- offset_head(mu)
-  X <- stack_forward(W, mu0, nu)
   ranks <- rep(as.integer(rank_init), Tn)
   retained <- rep(NA_integer_, Tn)
   dvals <- replicate(Tn, numeric(0L), simplify = FALSE)
@@ -192,8 +191,9 @@ bmfsvt <- function(Y, train = NULL, lambda = NULL, alpha = 0.55, C = 20L,
 
     # Psi depends only on the extrapolation point W, so it is computed once
     # per outer iteration rather than once per backtrack.
-    Psi <- grad_backward(X, Y, train)
-    f_W <- stack_ce(X, Y, train)
+    gc_W <- stack_grad(W, mu0, nu, Y, train, ce = TRUE)
+    Psi <- gc_W$Psi
+    f_W <- gc_W$f
 
     bt <- 0L
     repeat {
@@ -206,7 +206,8 @@ bmfsvt <- function(Y, train = NULL, lambda = NULL, alpha = 0.55, C = 20L,
       retained <- integer(Tn)
       n_clipped <- 0L
       for (t in seq_len(Tn)) {
-        svt <- soft_svt(W[[t]] - Psi[[t]] / L[t], thresh = lambda[t] / L[t],
+        svt <- soft_svt(prox_point_cpp(W[[t]], Psi[[t]], L[t]),
+                        thresh = lambda[t] / L[t],
                         rank_guess = ranks[t], rank_max = rank_max,
                         rank_step = rank_step, method = svd_method)
         n_svd <- n_svd + svt$n_svd
@@ -216,30 +217,21 @@ bmfsvt <- function(Y, train = NULL, lambda = NULL, alpha = 0.55, C = 20L,
         dvals[[t]] <- svt$d
         Vs[[t]] <- svt$v
         if (t > 1L) {
-          level <- if (is.matrix(clip_level)) {
-            rep(clip_level[t - 1L, ], each = N)
+          cl <- clip_block(mat, if (is.matrix(clip_level)) {
+            clip_level[t - 1L, ]
           } else {
             clip_level[t - 1L]
-          }
-          viol <- mat > level
-          n_clipped <- n_clipped + sum(viol)
-          if (any(viol)) {
-            mat[viol] <- if (length(level) > 1L) level[viol] else level
-          }
+          })
+          mat <- cl$mat
+          n_clipped <- n_clipped + cl$n_clipped
         }
         Zp[[t]] <- mat
       }
 
-      Xp <- stack_forward(Zp, mu0, nu)
-      f_new <- stack_ce(Xp, Y, train)
-
       # Q(Z' | W) = f(X_W) + <Z' - W, Psi> + sum_t L_t/2 ||Z'^(t) - W^(t)||_F^2
-      quad <- f_W
-      for (t in seq_len(Tn)) {
-        diff_t <- Zp[[t]] - W[[t]]
-        quad <- quad + sum(diff_t * Psi[[t]]) + L[t] / 2 * sum(diff_t^2)
-      }
-      Delta <- f_new - quad
+      ev <- step_eval(Zp, W, Psi, L, mu0, nu, Y, train, f_W)
+      f_new <- ev$f
+      Delta <- f_new - ev$quad
 
       if (Delta > 0 && bt < max_backtrack) {
         L <- gamma * L
@@ -264,12 +256,9 @@ bmfsvt <- function(Y, train = NULL, lambda = NULL, alpha = 0.55, C = 20L,
     }
 
     # ---- convergence -----------------------------------------
-    num <- 0
-    den <- 0
-    for (t in seq_len(Tn)) {
-      num <- num + sum((Zp[[t]] - Z[[t]])^2)
-      den <- den + sum(Z[[t]]^2)
-    }
+    st <- fista_stats(Zp, Z, W)
+    num <- st[["num"]]
+    den <- st[["den"]]
     m <- m + 1L
     if (verbose) {
       message(sprintf(
@@ -278,7 +267,6 @@ bmfsvt <- function(Y, train = NULL, lambda = NULL, alpha = 0.55, C = 20L,
     }
     if (num / (den + delta) < tol) {
       Z <- Zp
-      X <- Xp
       converged <- TRUE
       break
     }
@@ -292,9 +280,7 @@ bmfsvt <- function(Y, train = NULL, lambda = NULL, alpha = 0.55, C = 20L,
         # step moves against the proximal direction. Cheap insurance, and the
         # clipping step breaks the exact proximal-gradient structure that plain
         # FISTA assumes.
-        ip <- 0
-        for (t in seq_len(Tn)) ip <- ip + sum((W[[t]] - Zp[[t]]) * (Zp[[t]] - Z[[t]]))
-        ip > 0
+        st[["ip"]] > 0
       },
       `function` = length(obj_trace) > 1L &&
         obj_trace[length(obj_trace)] > obj_trace[length(obj_trace) - 1L]
@@ -305,15 +291,13 @@ bmfsvt <- function(Y, train = NULL, lambda = NULL, alpha = 0.55, C = 20L,
       W <- Zp
     } else {
       fac <- (s_curr - 1) / s_next
-      W <- if (fac == 0) Zp else
-        lapply(seq_len(Tn), function(t) Zp[[t]] + fac * (Zp[[t]] - Z[[t]]))
+      W <- if (fac == 0) Zp else extrapolate_cpp(Zp, Z, fac)
     }
     s_curr <- s_next
     Z <- Zp
-    X <- stack_forward(W, mu0, nu)
   }
 
-  if (!converged) X <- stack_forward(Z, mu0, nu)
+  X <- stack_forward(Z, mu0, nu)
 
 
 

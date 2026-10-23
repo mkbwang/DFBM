@@ -201,7 +201,9 @@ cv_losses <- function(prob, Y, val, values = NULL) {
 #'
 #' **Parallelism.** Splits are independent and are forked with
 #' `parallel::mclapply`. Their seeds are drawn in the parent, so serial and
-#' parallel runs agree exactly. Pin the BLAS to one thread before forking
+#' parallel runs agree exactly. Each worker pins its BLAS to one thread when
+#' \pkg{RhpcBLASctl} is installed; pin the parent too, since the refit runs
+#' there.
 #'
 #' @seealso [train_mask_generation()] for the splits.
 #' @importFrom stats sd
@@ -299,8 +301,14 @@ cv.bmfsvt <- function(Y,
 
   parallel_ok <- ncores > 1L && n_splits > 1L && .Platform$OS.type != "windows"
   parts <- if (parallel_ok) {
-    parallel::mclapply(seq_len(n_splits), one_split,
-                       mc.cores = min(ncores, n_splits))
+    # A threaded BLAS in every fork oversubscribes the machine; pinning it
+    # inside the child leaves the parent and the results untouched.
+    parallel::mclapply(seq_len(n_splits), function(k) {
+      if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+        RhpcBLASctl::blas_set_num_threads(1L)
+      }
+      one_split(k)
+    }, mc.cores = min(ncores, n_splits))
   } else {
     lapply(seq_len(n_splits), one_split)
   }

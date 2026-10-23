@@ -136,7 +136,7 @@ foldin_rows <- function(Y, B, mu0, nu, lambda, tol = 1e-6, max_iter = 2000L) {
 
   for (m in seq_len(max_iter)) {
     Zw <- lapply(tt, function(t) tcrossprod(W[[t]], B[[t]]))
-    Psi <- grad_backward(stack_forward(Zw, mu0, nu), Yw)
+    Psi <- stack_grad(Zw, mu0, nu, Yw)$Psi
     G <- lapply(tt, function(t) Psi[[t]] %*% B[[t]] + lambda[t] * W[[t]])
     gn <- sqrt(Reduce(`+`, lapply(G, function(g) rowSums(g^2))))
 

@@ -124,7 +124,9 @@ favour one alpha over another.
 
 \strong{Parallelism.} Splits are independent and are forked with
 \code{parallel::mclapply}. Their seeds are drawn in the parent, so serial and
-parallel runs agree exactly. Pin the BLAS to one thread before forking
+parallel runs agree exactly. Each worker pins its BLAS to one thread when
+\pkg{RhpcBLASctl} is installed; pin the parent too, since the refit runs
+there.
 }
 \seealso{
 \code{\link[=train_mask_generation]{train_mask_generation()}} for the splits.

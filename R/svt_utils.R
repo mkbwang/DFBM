@@ -3,8 +3,8 @@
 #
 # The functions marked "hot kernel" below are the elementwise passes that
 # dominate runtime whenever the SVD is cheap (e.g. tall, narrow matrices).
-# They are kept small and free of side effects so that they can be swapped for
-# RcppArmadillo equivalents without touching bmfsvt() itself.
+# Their bodies are in C++ (src/svt_kernels.cpp), which reproduces the R
+# expressions operation for operation; the R wrappers keep the signatures.
 
 
 #' log one plus exponential
@@ -130,8 +130,7 @@ mask_prevalence <- function(Y, train = NULL) {
 #' large-\eqn{X} branch; evaluating \code{log(sigmoid(X))} directly underflows.
 #' @keywords internal
 logistic_ce <- function(X, Y, train = NULL) {
-  val <- log1exp(X) - Y * X
-  if (is.null(train)) sum(val) else sum(train * val)
+  logistic_ce_cpp(X, Y, train)
 }
 
 
@@ -151,29 +150,8 @@ logistic_ce <- function(X, Y, train = NULL) {
 #' length-P vector against an n x P matrix runs down the rows, which is wrong.
 #' @keywords internal
 stack_forward <- function(Z, mu0, nu) {
-  Tn <- length(Z)
-  X <- vector("list", Tn)
-  if (is.matrix(nu) || length(mu0) > 1L) {
-    n <- nrow(Z[[1L]])
-    running <- Z[[1L]] + rep(mu0, each = n)
-    X[[1L]] <- running
-    if (Tn > 1L) {
-      for (t in seq.int(2L, Tn)) {
-        running <- running + Z[[t]] + rep(nu[t - 1L, ], each = n)
-        X[[t]] <- running
-      }
-    }
-    return(X)
-  }
-  running <- Z[[1L]] + mu0
-  X[[1L]] <- running
-  if (Tn > 1L) {
-    for (t in seq.int(2L, Tn)) {
-      running <- running + Z[[t]] + nu[t - 1L]
-      X[[t]] <- running
-    }
-  }
-  X
+  if (!is.double(nu)) storage.mode(nu) <- "double"
+  stack_forward_cpp(Z, as.double(mu0), nu)
 }
 
 
@@ -191,12 +169,25 @@ stack_forward <- function(Z, mu0, nu) {
 clip_increments <- function(Z, nu) {
   Tn <- length(Z)
   if (Tn < 2L) return(Z)
-  n <- nrow(Z[[1L]])
   for (t in seq.int(2L, Tn)) {
-    level <- if (is.matrix(nu)) rep(-nu[t - 1L, ], each = n) else -nu[t - 1L]
-    Z[[t]] <- pmin(Z[[t]], level)
+    level <- if (is.matrix(nu)) -nu[t - 1L, ] else -nu[t - 1L]
+    Z[[t]] <- clip_block(Z[[t]], level)$mat
   }
   Z
+}
+
+
+#' Cap one block at a per-column level
+#'
+#' @param mat a numeric matrix
+#' @param level a scalar, or one level per column
+#' @returns a list with `mat`, equal to `pmin(mat, level)` with `level`
+#'   broadcast down the rows, and `n_clipped`, the number of entries changed
+#' @details Hot kernel: the clipping step of [bmfsvt()] and [clip_increments()].
+#' @keywords internal
+clip_block <- function(mat, level) {
+  if (!is.double(mat)) storage.mode(mat) <- "double"
+  clip_block_cpp(mat, as.double(level))
 }
 
 
@@ -322,16 +313,66 @@ crps_discrete <- function(prob, M, y) {
 #' softImpute.
 #' @keywords internal
 grad_backward <- function(X, Y, train = NULL) {
-  Tn <- length(X)
-  Psi <- vector("list", Tn)
-  running <- NULL
-  for (t in seq.int(Tn, 1L)) {
-    resid <- sigmoid(X[[t]]) - Y[[t]]
-    if (!is.null(train)) resid <- resid * train
-    running <- if (is.null(running)) resid else running + resid
-    Psi[[t]] <- running
-  }
-  Psi
+  grad_backward_cpp(X, Y, train)
+}
+
+
+#' Gradient, and optionally cross entropy, at the stack built from increments
+#'
+#' @param Z list of T increment matrices
+#' @param mu0,nu offsets, see [stack_forward()]
+#' @param Y list of T binary matrices
+#' @param train optional training mask, see [grad_backward()]
+#' @param ce whether to also return the stacked cross entropy
+#' @returns a list with `Psi`, equal to
+#'   `grad_backward(stack_forward(Z, mu0, nu), Y, train)`, and `f`, equal to
+#'   `stack_ce(stack_forward(Z, mu0, nu), Y, train)` when `ce` and `NA`
+#'   otherwise
+#' @details
+#' Hot kernel. Each entry's \eqn{X^{(1..T)}} is built on the fly in the order
+#' of operations of [stack_forward()], so the natural parameter stack is never
+#' allocated. With `ce`, one exponential serves both the sigmoid and the cross
+#' entropy, which moves the sigmoid by an ulp or two.
+#' @keywords internal
+stack_grad <- function(Z, mu0, nu, Y, train = NULL, ce = FALSE) {
+  if (!is.double(nu)) storage.mode(nu) <- "double"
+  stack_grad_cpp(Z, as.double(mu0), nu, Y, train, ce)
+}
+
+
+#' Objective and quadratic model at a candidate proximal step
+#'
+#' @param Zp list of T candidate increment matrices
+#' @param W list of T extrapolation point matrices
+#' @param Psi gradient at `W`, see [grad_backward()]
+#' @param L Lipschitz constants, length T
+#' @param mu0,nu offsets, see [stack_forward()]
+#' @param Y list of T binary matrices
+#' @param train optional training mask
+#' @param f_W stacked cross entropy at `W`
+#' @returns a list with `f = stack_ce(stack_forward(Zp, mu0, nu), Y, train)`
+#'   and the backtracking bound
+#'   \eqn{Q = f_W + \sum_t \langle Z'_t - W_t, \Psi_t\rangle +
+#'   \frac{L_t}{2}\|Z'_t - W_t\|_F^2}
+#' @details Hot kernel: one backtracking step of [bmfsvt()] in a single pass,
+#' building each entry's natural parameters on the fly as [stack_grad()] does.
+#' @keywords internal
+step_eval <- function(Zp, W, Psi, L, mu0, nu, Y, train, f_W) {
+  if (!is.double(nu)) storage.mode(nu) <- "double"
+  step_eval_cpp(Zp, W, Psi, as.double(L), as.double(mu0), nu, Y, train, f_W)
+}
+
+
+#' Convergence and restart statistics of a FISTA step
+#'
+#' @param Zp,Z,W lists of T matrices: the new iterate, the previous iterate and
+#'   the extrapolation point
+#' @returns a named vector: `num` \eqn{\sum_t\|Z'_t - Z_t\|_F^2}, `den`
+#'   \eqn{\sum_t\|Z_t\|_F^2} and `ip` \eqn{\sum_t\langle W_t - Z'_t, Z'_t -
+#'   Z_t\rangle}
+#' @keywords internal
+fista_stats <- function(Zp, Z, W) {
+  fista_stats_cpp(Zp, Z, W)
 }
 
 
@@ -399,7 +440,8 @@ soft_svt <- function(M, thresh, rank_guess = 5L, rank_max = NULL,
 
   n_svd <- 0L
   if (use_full) {
-    sv <- full_svd()
+    sv <- if (method == "auto" && mindim <= full_cutoff) gram_svd(M, thresh)
+    if (is.null(sv)) sv <- full_svd() else n_svd <- n_svd + 1L
     d <- sv$d
   } else {
     attempt <- 0L
@@ -439,15 +481,57 @@ soft_svt <- function(M, thresh, rank_guess = 5L, rank_max = NULL,
   }
 
   dshrunk <- d[keep] - thresh
-  u <- sv$u[, keep, drop = FALSE]
   v <- sv$v[, keep, drop = FALSE]
-  mat <- u %*% (dshrunk * t(v))
+  mat <- if (isTRUE(sv$tall)) {
+    # M V_k diag((d - thresh) / d) V_k' is the same matrix as U_k D_k V_k', and
+    # for a narrow M costs one product with a ncol x ncol matrix.
+    M %*% (v %*% ((dshrunk / d[keep]) * t(v)))
+  } else {
+    sv$u[, keep, drop = FALSE] %*% (dshrunk * t(v))
+  }
 
   # `v` is kept so that a fitted block can fold in new rows; see predict.bmfsvt().
   list(mat = mat, rank = length(keep), d = dshrunk, v = v,
        rank_next = rank_next, n_svd = n_svd)
 }
 
+
+
+#' Singular value decomposition through the smaller Gram matrix
+#'
+#' @param M matrix to decompose
+#' @param thresh soft thresholding level that will be applied, see [soft_svt()]
+#' @param min_ratio give up, returning `NULL`, when `thresh` is below this
+#'   fraction of the largest singular value
+#' @returns `NULL`, or a list with all singular values `d` (decreasing), `v`
+#'   and `u` holding at least the singular vectors of the components above
+#'   `thresh` in their leading columns, and `tall`. When `tall` is `TRUE`, `u`
+#'   is `NULL`: [soft_svt()] then rebuilds the block from `M` and `v` alone.
+#' @details
+#' Used by [soft_svt()] under `method = "auto"` when the smaller dimension is
+#' at most `full_cutoff`. For the tall, narrow blocks of an abundance matrix the
+#' symmetric eigendecomposition of the k x k Gram matrix, k = min(dim(M)), costs
+#' a fraction of a full [svd()]. For a wide M the right vectors follow from one
+#' matrix product, only for the components that are retained; a tall M needs
+#' no left vectors at all.
+#'
+#' Squaring loses precision only in singular values far below the largest:
+#' the absolute error of a soft thresholded component is about
+#' \eqn{\epsilon d_1^2 / (2\,\mathrm{thresh})}. Below `min_ratio` that is no
+#' longer negligible against \eqn{\epsilon d_1} and the caller falls back to
+#' [svd()].
+#' @keywords internal
+gram_svd <- function(M, thresh, min_ratio = 1e-4) {
+  tall <- nrow(M) >= ncol(M)
+  e <- eigen(if (tall) crossprod(M) else tcrossprod(M), symmetric = TRUE)
+  d <- sqrt(pmax(e$values, 0))
+  if (d[1L] > 0 && thresh < min_ratio * d[1L]) return(NULL)
+  if (tall) return(list(d = d, u = NULL, v = e$vectors, tall = TRUE))
+  idx <- seq_len(sum(d > thresh))
+  v <- crossprod(M, e$vectors[, idx, drop = FALSE]) /
+    rep(d[idx], each = ncol(M))
+  list(d = d, u = e$vectors, v = v, tall = FALSE)
+}
 
 
 #' Noise floor shrinkage parameter for each binary mask
